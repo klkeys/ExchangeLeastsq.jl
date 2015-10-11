@@ -5,6 +5,7 @@ using RegressionTools
 using PLINK
 using Distances: euclidean, chebyshev
 using StatsBase: sample
+
 import Base.LinAlg.BLAS.gemv
 import Base.LinAlg.BLAS.gemv!
 import Base.LinAlg.BLAS.axpy!
@@ -23,18 +24,6 @@ export test_exchangeleastsq_plink
 ###################
 ### SUBROUTINES ###
 ###################
-
-## PARTIAL PERMUTATION SORT ON INDICES OF A VECTOR
-## This subroutine replaces sortperm to get the top k components of a vector in magnitude.
-## By performing only a partial sort, it saves in compute time and memory.
-## Feed selectperm() a preallocated vector z of indices for optimal performance.
-##function selectperm(x,k::Int; p::Int = length(x), z::Array{Int,1} = [1:p])
-#function selectperm!(z::DenseArray{Int,1}, x::DenseArray{Float64,1}, k::Int; p::Int = length(x)) 
-#	k <= p                 || throw(ArgumentError("selectperm: k cannot exceed length of x!"))
-#	length(z) == length(x) || throw(DimensionMismatch("Arguments z and x do not have the same length")) 
-#	return select!(z, 1:k, by = (i)->abs(x[i]), rev = true)
-#end 
-
 
 # calculate residuals (Y - XB)  piecemeal
 # first line does residuals = - X * x_mm
@@ -158,7 +147,7 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::DenseArray{Float64
 	old_rss::Float64 = Inf	# previous residual sum of squares 
 
 	# obtain top r components of betavec in magnitude
-	selectperm!(perm,betavec, r, p=p)
+	selectpermk!(perm,betavec, r, p=p)
 
 	# compute partial residuals based on top r components of perm vector
 	RegressionTools.update_partial_residuals!(res, Y, X, perm, betavec, r, n=n, p=p)
@@ -351,9 +340,7 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::BEDFile, Y::DenseA
 	old_rss::Float64 = Inf	# previous residual sum of squares 
 
 	# obtain top r components of betavec in magnitude
-#	println("selectperm!")
-#	@time selectperm!(perm,betavec, r, p=p)
-	selectperm!(perm,betavec, r, p=p)
+	selectpermk!(perm,betavec, r, p=p)
 	indices = falses(p)
 	for i = 1:r
 		indices[perm[i]] = true
