@@ -1,6 +1,5 @@
 module ExchangeLeastsq
 
-using NumericExtensions
 using GLMNet
 using RegressionTools
 using PLINK
@@ -25,16 +24,16 @@ export test_exchangeleastsq_plink
 ### SUBROUTINES ###
 ###################
 
-# PARTIAL PERMUTATION SORT ON INDICES OF A VECTOR
-# This subroutine replaces sortperm to get the top k components of a vector in magnitude.
-# By performing only a partial sort, it saves in compute time and memory.
-# Feed selectperm() a preallocated vector z of indices for optimal performance.
-#function selectperm(x,k::Int; p::Int = length(x), z::Array{Int,1} = [1:p])
-function selectperm!(z::DenseArray{Int,1}, x::DenseArray{Float64,1}, k::Int; p::Int = length(x)) 
-	k <= p                 || throw(ArgumentError("selectperm: k cannot exceed length of x!"))
-	length(z) == length(x) || throw(DimensionMismatch("Arguments z and x do not have the same length")) 
-	return select!(z, 1:k, by = (i)->abs(x[i]), rev = true)
-end 
+## PARTIAL PERMUTATION SORT ON INDICES OF A VECTOR
+## This subroutine replaces sortperm to get the top k components of a vector in magnitude.
+## By performing only a partial sort, it saves in compute time and memory.
+## Feed selectperm() a preallocated vector z of indices for optimal performance.
+##function selectperm(x,k::Int; p::Int = length(x), z::Array{Int,1} = [1:p])
+#function selectperm!(z::DenseArray{Int,1}, x::DenseArray{Float64,1}, k::Int; p::Int = length(x)) 
+#	k <= p                 || throw(ArgumentError("selectperm: k cannot exceed length of x!"))
+#	length(z) == length(x) || throw(DimensionMismatch("Arguments z and x do not have the same length")) 
+#	return select!(z, 1:k, by = (i)->abs(x[i]), rev = true)
+#end 
 
 
 # calculate residuals (Y - XB)  piecemeal
@@ -165,7 +164,7 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::DenseArray{Float64
 	RegressionTools.update_partial_residuals!(res, Y, X, perm, betavec, r, n=n, p=p)
 
 	# save value of RSS before starting algorithm
-	rss = NumericExtensions.sumsq(res)
+	rss = sumabs2(res)
 
 	# compute inner products of X and residuals 
 	# this is basically the negative gradient
@@ -248,7 +247,7 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::DenseArray{Float64
 		end # end middle loop over predictors 
 
 		# update residual sum of squares
-		rss = NumericExtensions.sumsq(res)
+		rss = sumabs2(res)
 
 		# test for descent failure 
 		# if no descent failure, then test for convergence
@@ -352,8 +351,9 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::BEDFile, Y::DenseA
 	old_rss::Float64 = Inf	# previous residual sum of squares 
 
 	# obtain top r components of betavec in magnitude
-	println("selectperm!")
-	@time selectperm!(perm,betavec, r, p=p)
+#	println("selectperm!")
+#	@time selectperm!(perm,betavec, r, p=p)
+	selectperm!(perm,betavec, r, p=p)
 	indices = falses(p)
 	for i = 1:r
 		indices[perm[i]] = true
@@ -361,20 +361,23 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::BEDFile, Y::DenseA
 
 	# compute partial residuals based on top r components of perm vector
 #	PLINK.update_partial_residuals!(res, Y, X, perm, betavec, r) 
-	println("xb!")
-	@time xb!(Xb,X,betavec,indices,r, means=means, invstds=invstds)
-	println("update_partial_residuals!")
-	@time PLINK.update_partial_residuals!(res, Y, X, indices, betavec, r, Xb=Xb, means=means, invstds=invstds)
+
+#	println("xb!")
+#	@time xb!(Xb,X,betavec,indices,r, means=means, invstds=invstds)
+	xb!(Xb,X,betavec,indices,r, means=means, invstds=invstds)
+#	println("update_partial_residuals!")
+#	@time PLINK.update_partial_residuals!(res, Y, X, indices, betavec, r, Xb=Xb, means=means, invstds=invstds)
+#	PLINK.update_partial_residuals!(res, Y, X, indices, betavec, r, Xb=Xb, means=means, invstds=invstds)
+	difference!(res, Y, Xb, n=n)
 
 	# save value of RSS before starting algorithm
-	println("NumericExtensions.sumsq")
-	@time rss = NumericExtensions.sumsq(sdata(res))
+	rss = sumabs2(res)
 
 	# compute inner products of X and residuals 
 	# this is basically the negative gradient
-#	xty!(df, X, res) 
-	println("xty!")
-	@time xty!(df, X, res, means=means, invstds=invstds)
+#	println("xty!")
+#	@time xty!(df, X, res, means=means, invstds=invstds)
+	xty!(df, X, res, means=means, invstds=invstds)
 
 	# outer loop controls number of total iterations for algorithm run on one r
 	for iter = 1:(max_iter)
@@ -388,8 +391,9 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::BEDFile, Y::DenseA
 			# save information for current value of i
 			l     = perm[i]
 			betal = betavec[l]
-			println("decompress_genotypes!")
-			@time decompress_genotypes!(tempn, X, l, means, invstds) # tempn now holds X[:,l]
+#			println("decompress_genotypes!")
+#			@time decompress_genotypes!(tempn, X, l, means, invstds) # tempn now holds X[:,l]
+			decompress_genotypes!(tempn, X, l, means, invstds) # tempn now holds X[:,l]
 
 			# if necessary, compute inner products of current predictor against all other predictors
 			# store this information in Dict inner
@@ -397,8 +401,9 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::BEDFile, Y::DenseA
 			# the if/else statement below is the same as but faster than
 			# > dotprods = get!(inner, l, BLAS.gemv('T', 1.0, X, tempn))
 			if !haskey(inner, l)
-				println("xty")
-				@time inner[l] = xty(X, tempn, means=means, invstds=invstds)
+#				println("xty")
+#				@time inner[l] = xty(X, tempn, means=means, invstds=invstds)
+				inner[l] = xty(X, tempn, means=means, invstds=invstds)
 			end
 			copy!(dotprods,inner[l])
 
@@ -428,25 +433,28 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::BEDFile, Y::DenseA
 			
 			# now want to update residuals with current best predictor
 			m = perm[k]
-			println("decompress_genotypes!")
-			@time decompress_genotypes!(tempn2, X, m, means, invstds) # tempn now holds X[:,l]
-			println("axpymbz!")
-			@time axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+#			println("decompress_genotypes!")
+#			@time decompress_genotypes!(tempn2, X, m, means, invstds) # tempn now holds X[:,l]
+			decompress_genotypes!(tempn2, X, m, means, invstds) # tempn now holds X[:,l]
+#			println("axpymbz!")
+#			@time axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
 
 			# if necessary, compute inner product of current predictor against all other predictors
 			# save in our Dict for future reference
 			# compare in performance to
 			# > tempp = get!(inner, m, BLAS.gemv('T', 1.0, X, tempn2))
 			if !haskey(inner, m)
-#				inner[m] = xty(X,tempn2)
-				println("xty")
-				@time inner[m] = xty(X, tempn2, means=means, invstds=invstds)
+#				println("xty")
+#				@time inner[m] = xty(X, tempn2, means=means, invstds=invstds)
+				inner[m] = xty(X, tempn2, means=means, invstds=invstds)
 			end
 			copy!(tempp, inner[m])
 
 			# also update df
-			println("axpymbz!")
-			@time axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+#			println("axpymbz!")
+#			@time axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
 
 			# now swap best predictor with current predictor
 			j          = perm[i]
@@ -460,8 +468,7 @@ function exchange_leastsq!(betavec::DenseArray{Float64,1}, X::BEDFile, Y::DenseA
 		end # end middle loop over predictors 
 
 		# update residual sum of squares
-		println("NumericExtensions.sumsq")
-		@time rss = NumericExtensions.sumsq(sdata(res))
+		rss = sumabs2(res)
 
 		# test for numerical instability
 		isnan(rss) && throw(error("Objective function is NaN!"))
@@ -576,7 +583,7 @@ function one_fold(x::DenseArray{Float64,2}, y::DenseArray{Float64,1}, path_lengt
 	betas = sparse(betas)
 
 	# compute the mean out-of-sample error for the TEST set 
-	myerrors  = vec(sumsq(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
+	myerrors  = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
 
 	return myerrors
 end
@@ -671,7 +678,7 @@ function one_fold(x::BEDFile, y::DenseArray{Float64,1}, path_length::Int, folds:
 	betas = sparse(betas)
 
 	# compute the mean out-of-sample error for the TEST set 
-	myerrors  = vec(sumsq(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
+	myerrors  = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
 
 	return myerrors
 end
@@ -988,7 +995,7 @@ function test_exleastsq(n::Int, p::Int, r::Int, extra::Int; max_iter::Int = 100,
 	dotprods   = zeros(p)	# hold in memory the dot products for current index
 
 	# precompute sum of squares for each column of x
-	const nrmsq = vec(NumericExtensions.sumsq(x,1))
+	const nrmsq = vec(sumabs2(x,1))
 
 	# declare return array
 	betas = zeros(p,r+extra)
@@ -1009,7 +1016,7 @@ function test_exleastsq(n::Int, p::Int, r::Int, extra::Int; max_iter::Int = 100,
 	@time begin
 		for k = 1:(r+extra)
 			b = exchange_leastsq!(b, x, y, perm, k, inner=inner, max_iter=max_iter, quiet=quiet, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window=min(k,window))
-			rss = NumericExtensions.sumsq(res)
+			rss = sumabs2(res)
 
 			# print results from this step of regularization path
 			if !quiet
@@ -1099,7 +1106,7 @@ function test_exchangeleastsq(x_path::ASCIIString = "/Users/kkeys/Downloads/wtcc
 	# precompute sum of squares for each column of x
 	quiet || println("Precomputing squared Euclidean norms of matrix columns...")
 	tic()
-	const nrmsq = vec(NumericExtensions.sumsq(sdata(x),1))
+	const nrmsq = vec(sumabs2(x,1))
 	norm_time = toq()
 	quiet || println("Column norms took ", norm_time, " seconds to compute")
 
@@ -1118,7 +1125,7 @@ function test_exchangeleastsq(x_path::ASCIIString = "/Users/kkeys/Downloads/wtcc
 	@time begin
 		for i = 1:(r+extra)
 			b = exchange_leastsq!(b, x, y, perm, i, inner=inner, max_iter=max_iter, quiet=quiet, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window=min(i,window))
-			rss = NumericExtensions.sumsq(res)
+			rss = sumabs2(res)
 
 			# print results from this step of regularization path
 			quiet || println("#pred = ", i, ", rss = ", rss, ", #truepos = ", countnz(b[bidx])) 
@@ -1400,7 +1407,7 @@ function test_exchangeleastsq_plink(x_path::ASCIIString = "/Users/kkeys/Download
 	@time begin
 		for i = 2:(r+extra)
 			exchange_leastsq!(b, x, y, perm, i, p, n=n, inner=inner, max_iter=max_iter, quiet=quiet, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window=min(i,window), Xb=Xb, means=means, invstds=invstds, indices=indices)
-			rss = NumericExtensions.sumsq(sdata(res))
+			rss = sumabs2(res)
 
 			# print results from this step of regularization path
 			quiet || println("#pred = ", i, ", rss = ", rss, ", #truepos = ", countnz(b[bidx])) 
