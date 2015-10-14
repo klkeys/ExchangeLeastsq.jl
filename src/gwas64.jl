@@ -49,21 +49,21 @@
 	inner    :: Dict{Int,DenseArray{Float64,1}} = Dict{Int,DenseArray{Float64,1}}(), 
 	means    :: DenseArray{Float64,1} = mean(Float64,x), 
 	invstds  :: DenseArray{Float64,1} = invstd(x, means),
-	nrmsq    :: DenseArray{Float64,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
-	n        :: Int = length(Y), 
-	p        :: Int = size(X,2), 
-	Xb       :: DenseArray{Float64,1} = zeros(Float64, n), 
-	res      :: DenseArray{Float64,1} = zeros(Float64, n), 
-	df       :: DenseArray{Float64,1} = zeros(Float64, p), 
-	tempp    :: DenseArray{Float64,1} = zeros(Float64, p), 
-	tempn    :: DenseArray{Float64,1} = zeros(Float64, n), 
-	tempn2   :: DenseArray{Float64,1} = zeros(Float64, n), 
-	dotprods :: DenseArray{Float64,1} = zeros(Float64, p), 
-	indices  :: BitArray{1} = falses(p), 
-	window   :: Int     = r, 
-	max_iter :: Int     = 10000, 
-	tol      :: Float64 = 1e-4, 
-	quiet    :: Bool    = false
+	nrmsq    :: DenseArray{Float64,1} = sumsq(Float64, x, shared=false, means=means, invstds=invstds), 
+	n        :: Int                   = length(Y), 
+	p        :: Int                   = size(X,2), 
+	df       :: DenseArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	dotprods :: DenseArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempp    :: DenseArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	Xb       :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	res      :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn    :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn2   :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	indices  :: BitArray{1}           = falses(p), 
+	window   :: Int                   = r, 
+	max_iter :: Int                   = 10000, 
+	tol      :: Float64               = 1e-4, 
+	quiet    :: Bool                  = false
 )
 
 	# error checking
@@ -77,7 +77,7 @@
 	p == length(nrmsq)    || throw(DimensionMismatch("length(bvec) != length(nrmsq)"))
 	p == length(perm)     || throw(DimensionMismatch("length(bvec) != length(perm)"))
 	0 <= r <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(bvec)"))
-	tol >= eps()          || throw(ArgumentError("Global tolerance must exceed machine precision"))
+	tol >= eps(Float64)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
 	max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
 	0 <= window <= r      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
 
@@ -116,7 +116,7 @@
 	# compute inner products of X and residuals 
 	# this is basically the negative gradient
 	xty!(df, X, res, means=means, invstds=invstds)
-
+	
 	# outer loop controls number of total iterations for algorithm run on one r
 	for iter = 1:(max_iter)
 
@@ -152,6 +152,7 @@
 				idx = perm[j]
 				c   = df[idx] + betal*dotprods[idx]
 				d   = nrmsq[idx]
+
 
 				# if current inactive predictor beats current active predictor,
 				# then save info for swapping

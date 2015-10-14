@@ -288,12 +288,9 @@ function test_exchangeleastsq_plink(x_path::ASCIIString = "/Users/kkeys/Download
 	# precompute sum of squares for each column of x
 	quiet || println("\nPrecomputing squared Euclidean norms of matrix columns...")
 	tic()
-	const nrmsq = sumsq(x, shared=true, means=means, invstds=invstds)
+	const nrmsq = sumsq(Float64, x, shared=true, means=means, invstds=invstds)
 	norm_time = toq()
 	quiet || println("Column norms took ", norm_time, " seconds to compute")
-
-	# declare any return values
-	iter::Int = 0
 
 	# print time spent on parameter initialization
 	parameter_time = norm_time + alloc_time + file_time + B_time

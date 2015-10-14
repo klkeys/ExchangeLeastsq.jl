@@ -6,6 +6,7 @@ using PLINK
 using Distances: euclidean, chebyshev
 using StatsBase: sample
 using Compat
+using OpenCL
 
 export exchange_leastsq
 export exchange_leastsq!
@@ -20,6 +21,7 @@ include("cv64.jl")
 include("cv32.jl")
 include("exlstsq64.jl")
 include("exlstsq32.jl")
+include("gpu32.jl")
 include("gwas64.jl")
 include("gwas32.jl")
 include("test.jl")

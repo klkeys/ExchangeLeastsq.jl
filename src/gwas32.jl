@@ -49,21 +49,21 @@
 	inner    :: Dict{Int,DenseArray{Float32,1}} = Dict{Int,DenseArray{Float32,1}}(), 
 	means    :: DenseArray{Float32,1} = mean(Float32,x), 
 	invstds  :: DenseArray{Float32,1} = invstd(x, means),
-	nrmsq    :: DenseArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
-	n        :: Int = length(Y), 
-	p        :: Int = size(X,2), 
-	Xb       :: DenseArray{Float32,1} = zeros(Float32, n), 
-	res      :: DenseArray{Float32,1} = zeros(Float32, n), 
-	df       :: DenseArray{Float32,1} = zeros(Float32, p), 
-	tempp    :: DenseArray{Float32,1} = zeros(Float32, p), 
-	tempn    :: DenseArray{Float32,1} = zeros(Float32, n), 
-	tempn2   :: DenseArray{Float32,1} = zeros(Float32, n), 
-	dotprods :: DenseArray{Float32,1} = zeros(Float32, p), 
-	indices  :: BitArray{1} = falses(p), 
-	window   :: Int     = r, 
-	max_iter :: Int     = 10000, 
-	tol      :: Float32 = 1f-4, 
-	quiet    :: Bool    = false
+	nrmsq    :: DenseArray{Float32,1} = sumsq(Float32, x, shared=false, means=means, invstds=invstds), 
+	n        :: Int                   = length(Y), 
+	p        :: Int                   = size(X,2), 
+	df       :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	dotprods :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempp    :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	Xb       :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	res      :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn    :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn2   :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	indices  :: BitArray{1}           = falses(p), 
+	window   :: Int                   = r, 
+	max_iter :: Int                   = 10000, 
+	tol      :: Float32               = 1f-4, 
+	quiet    :: Bool                  = false
 )
 
 	# error checking
@@ -77,7 +77,7 @@
 	p == length(nrmsq)    || throw(DimensionMismatch("length(bvec) != length(nrmsq)"))
 	p == length(perm)     || throw(DimensionMismatch("length(bvec) != length(perm)"))
 	0 <= r <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(bvec)"))
-	tol >= eps()          || throw(ArgumentError("Global tolerance must exceed machine precision"))
+	tol >= eps(Float32)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
 	max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
 	0 <= window <= r      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
 
