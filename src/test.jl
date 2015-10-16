@@ -231,7 +231,6 @@ function test_exchangeleastsq_plink(x_path::ASCIIString = "/Users/kkeys/Download
     # load response vector
     y = readdlm(y_path)
 	y = vec(y) # need y to be 1D
-	y = (y - mean(y)) / std(y)
 	const y = convert(SharedArray{Float64,1}, y)
 
 	const means   = PLINK.mean(Float64, x, shared=true) 

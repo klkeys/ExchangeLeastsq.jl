@@ -176,7 +176,7 @@ end
 			# save information for current value of i
 			l     = perm[i]
 			betal = bvec[l]
-			update_col!(tempn, X, l, n=n, p=p)	# tempn now holds X[:,l]
+			update_col!(tempn, X, l, n=n, p=p, a=1.0)	# tempn now holds X[:,l]
 
 			# if necessary, compute inner products of current predictor against all other predictors
 			# store this information in Dict inner
@@ -213,7 +213,7 @@ end
 			
 			# now want to update residuals with current best predictor
 			m = perm[k]
-			update_col!(tempn2, X, m, n=n, p=p)	# tempn2 now holds X[:,m]
+			update_col!(tempn2, X, m, n=n, p=p, a=1.0)	# tempn2 now holds X[:,m]
 			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
 
 			# if necessary, compute inner product of current predictor against all other predictors
@@ -221,7 +221,7 @@ end
 			# compare in performance to
 			# > tempp = get!(inner, m, BLAS.gemv('T', 1.0, X, tempn2))
 			if !haskey(inner, m)
-				inner[m] = BLAS.gemv('T', X, tempn2)
+				inner[m] = BLAS.gemv('T', 1.0, X, tempn2)
 			end
 			copy!(tempp, inner[m])
 
