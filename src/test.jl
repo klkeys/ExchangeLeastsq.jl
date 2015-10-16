@@ -202,7 +202,6 @@ end
 
 # TEST THE EXCHANGE ALGORITHM FOR LEAST SQUARES REGRESSION OVER PLINK BINARY DATA
 # This subroutine runs the exchange algorithm on a GWAS dataset from the WTCCC.
-#function test_exchangeleastsq_plink(n::Int, p::Int; x_path::ASCIIString = "/Users/kkeys/Dropbox/STAMPEED/filtered2.bed", y_path::ASCIIString = "/Users/kkeys/Dropbox/STAMPEED/filtered.trait", r::Int = 300, tol::Float64 = 1e-4, max_iter::Int = 100, quiet::Bool = false, extra::Int = 10, window::Int = 10) 
 function test_exchangeleastsq_plink(x_path::ASCIIString = "/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean.bed", xt_path::ASCIIString = "/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean_t.bed", y_path::ASCIIString = "/Users/kkeys/Downloads/withnoiselevelsd0_1/Y.100.1", b_path::ASCIIString = "/Users/kkeys/Downloads/withnoiselevelsd0_1/causal.100.1", r::Int = 10, tol::Float64 = 1e-4, max_iter::Int = 100, quiet::Bool = false, extra::Int = 10, window::Int = 10) 
 
     # repeat input options
@@ -279,7 +278,7 @@ function test_exchangeleastsq_plink(x_path::ASCIIString = "/Users/kkeys/Download
 	perm = SharedArray(Int, p, init = S -> S[localindexes(S)] = localindexes(S))
 
 	# declare associative array for storing inner products
-	inner = Dict{Int,DenseArray{Float64,1}}()
+	inner = Dict{Int,SharedArray{Float64,1}}()
 
 	# how long did the allocation take?
 	alloc_time = toq()
@@ -327,6 +326,8 @@ function test_exchangeleastsq_plink(x_path::ASCIIString = "/Users/kkeys/Download
 
 	return bk, bidx
 end
+
+test_exchangeleastsq_plink(r::Int, extra::Int, window::Int) = test_exchangeleastsq_plink("/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean.bed", "/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean_t.bed", "/Users/kkeys/Downloads/withnoiselevelsd0_1/Y.100.1", "/Users/kkeys/Downloads/withnoiselevelsd0_1/causal.100.1", r, 1e-4, 100, false, extra, window) 
 
 
 # CROSSVALIDATION ROUTINE FOR EXCHANGE ALGORITHM 

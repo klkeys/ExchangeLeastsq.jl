@@ -41,24 +41,24 @@
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu
 @compat function exchange_leastsq!(
-	bvec     :: DenseArray{Float64,1}, 
+	bvec     :: SharedArray{Float64,1}, 
 	X        :: BEDFile, 
-	Y        :: DenseArray{Float64,1}, 
-	perm     :: DenseArray{Int,1}, 
+	Y        :: SharedArray{Float64,1}, 
+	perm     :: SharedArray{Int,1}, 
 	r        :: Int; 
-	inner    :: Dict{Int,DenseArray{Float64,1}} = Dict{Int,DenseArray{Float64,1}}(), 
-	means    :: DenseArray{Float64,1} = mean(Float64,x), 
-	invstds  :: DenseArray{Float64,1} = invstd(x, means),
-	nrmsq    :: DenseArray{Float64,1} = sumsq(Float64, x, shared=false, means=means, invstds=invstds), 
+	inner    :: Dict{Int,SharedArray{Float64,1}} = Dict{Int,SharedArray{Float64,1}}(), 
+	means    :: SharedArray{Float64,1} = mean(Float64,x, shared=true), 
+	invstds  :: SharedArray{Float64,1} = invstd(x, means),
+	nrmsq    :: SharedArray{Float64,1} = sumsq(Float64, x, shared=true, means=means, invstds=invstds), 
 	n        :: Int                   = length(Y), 
 	p        :: Int                   = size(X,2), 
-	df       :: DenseArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	dotprods :: DenseArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempp    :: DenseArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	Xb       :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	res      :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn    :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn2   :: DenseArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	df       :: SharedArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	dotprods :: SharedArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempp    :: SharedArray{Float64,1} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	Xb       :: SharedArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	res      :: SharedArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn    :: SharedArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn2   :: SharedArray{Float64,1} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
 	indices  :: BitArray{1}           = falses(p), 
 	window   :: Int                   = r, 
 	max_iter :: Int                   = 10000, 
@@ -167,7 +167,8 @@
 			# now want to update residuals with current best predictor
 			m = perm[k]
 			decompress_genotypes!(tempn2, X, m, means, invstds) # tempn now holds X[:,l]
-			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+#			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+			axpymbz!(res, betal, tempn, adb, tempn2)
 
 			# if necessary, compute inner product of current predictor against all other predictors
 			# save in our Dict for future reference
@@ -177,12 +178,13 @@
 			copy!(tempp, inner[m])
 
 			# also update df
-			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+#			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+			axpymbz!(df, betal, dotprods, adb, tempp)
 
 			# now swap best predictor with current predictor
-			j          = perm[i]
-			perm[i]    = perm[k] 
-			perm[k]    = j 
+			j       = perm[i]
+			perm[i] = perm[k] 
+			perm[k] = j 
 			bvec[m] = adb
 			if k != i
 				bvec[j] = 0.0
@@ -242,13 +244,13 @@ end # end exchange_leastsq
 # klkeys@g.ucla.edu 
 @compat function one_fold(
 	x           :: BEDFile, 
-	y           :: DenseArray{Float64,1}, 
+	y           :: SharedArray{Float64,1}, 
 	path_length :: Int, 
-	folds       :: DenseArray{Int,1}, 
+	folds       :: SharedArray{Int,1}, 
 	fold        :: Int; 
-	means       :: DenseArray{Float64,1} = mean(Float64, x), 
-	invstds     :: DenseArray{Float64,1} = invstd(x, y=means), 
-	nrmsq       :: DenseArray{Float64,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
+	means       :: SharedArray{Float64,1} = mean(Float64, x, shared=true), 
+	invstds     :: SharedArray{Float64,1} = invstd(x, y=means), 
+	nrmsq       :: SharedArray{Float64,1} = sumsq(x, shared=true, means=means, invstds=invstds), 
 	p           :: Int  = size(x,2), 
 	max_iter    :: Int  = 1000, 
 	window      :: Int  = 20, 
@@ -270,19 +272,19 @@ end # end exchange_leastsq
 	# allocate the arrays for the training set
 	x_train   = x[train_idx,:]
 	y_train   = y[train_idx] 
-	b         = zeros(Float64, p)
-	betas     = zeros(Float64, p,path_length)
+	b         = SharedArray(Float64, p)
+	betas     = SharedArray(Float64, p,path_length)
 	perm      = collect(1:p)
-	inner     = Dict{Int,DenseArray{Float64,1}}()
+	inner     = Dict{Int,SharedArray{Float64,1}}()
 
 	# declare all temporary arrays
-	df         = zeros(Float64, p)	# X'(Y - Xbeta)
-	tempp      = zeros(Float64, p)	# temporary array of length p
-	dotprods   = zeros(Float64, p)	# hold in memory the dot products for current index
-	bout       = zeros(Float64, p)	# output array for beta
-	tempn      = zeros(Float64, n)	# temporary array of length n 
-	tempn2     = zeros(Float64, n)	# temporary array of length n 
-	res        = zeros(Float64, n)	# Y - Xbeta
+	df         = SharedArray(Float64, p)	# X'(Y - Xbeta)
+	tempp      = SharedArray(Float64, p)	# temporary array of length p
+	dotprods   = SharedArray(Float64, p)	# hold in memory the dot products for current index
+	bout       = SharedArray(Float64, p)	# output array for beta
+	tempn      = SharedArray(Float64, n)	# temporary array of length n 
+	tempn2     = SharedArray(Float64, n)	# temporary array of length n 
+	res        = SharedArray(Float64, n)	# Y - Xbeta
 	bnonzeroes = falses(p)	        # indicate nonzero components of beta
 
 	# loop over each element of path
@@ -356,13 +358,13 @@ end
 # klkeys@g.ucla.edu 
 @compat function cv_exlstsq(
 	x             :: BEDFile,
-	y             :: DenseArray{Float64,1}, 
+	y             :: SharedArray{Float64,1}, 
 	path_length   :: Int, 
 	numfolds      :: Int; 
-	nrmsq         :: DenseArray{Float64,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
-	means         :: DenseArray{Float64,1} = mean(Float64, x),
-	invstds       :: DenseArray{Float64,1} = invstd(x, y=means),
-	folds         :: DenseArray{Int,1}     = cv_get_folds(y,numfolds), 
+	nrmsq         :: SharedArray{Float64,1} = sumsq(x, shared=true, means=means, invstds=invstds), 
+	means         :: SharedArray{Float64,1} = mean(Float64, x, shared=true),
+	invstds       :: SharedArray{Float64,1} = invstd(x, y=means),
+	folds         :: SharedArray{Int,1}     = cv_get_folds(y,numfolds), 
 	tol           :: Float64 = 1e-4, 
 	n             :: Int     = length(y),
 	p             :: Int     = size(x,2), 
@@ -377,7 +379,7 @@ end
 
 	# preallocate vectors used in xval	
 	mses    = zeros(Float64, path_length)	# vector to save mean squared errors
-	my_refs = cell(numfolds)		# cell array to store RemoteRefs
+	my_refs = cell(numfolds)		        # cell array to store RemoteRefs
 
 	# want to compute a path for each fold
 	# the folds are computed asynchronously
@@ -418,16 +420,16 @@ end
 	if compute_model
 		
 		# initialize beta vector
-		bp = zeros(Float64, p)
+		fill!(sdata(b), 0.0)
 		perm = collect(1:p)
 		x_inferred = zeros(Float64, n, k)
 
 		# first use exchange algorithm to extract model
-		bp = exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
+		exchange_leastsq!(b, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
 
 		# which components of beta are nonzero?
 		# cannot use binary indices here since we need to return Int indices
-		inferred_model = find( function f(x) x.!= 0.0; end, bp)
+		inferred_model = find( x -> x.!= 0.0, b)
 
 		# allocate the submatrix of x corresponding to the inferred model
 		decompress_genotypes!(x_inferred, x, inferred_model, means=means, invstds=invstds)
@@ -436,8 +438,8 @@ end
 		# return it with the vector of MSEs
 		Xty = BLAS.gemv('T', 1.0, x_inferred, y)	
 		XtX = BLAS.gemm('T', 'N', 1.0, x_inferred, x_inferred)
-		b   = XtX \ Xty
-		return mses, b, inferred_model
+		b2   = XtX \ Xty
+		return mses, b2, inferred_model
 	end
 
 	return mses

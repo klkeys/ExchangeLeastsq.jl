@@ -7,23 +7,50 @@
 # The silly name is based on BLAS axpy (A*X Plus Y), except that this function performs A*X Plus Y Minus B*Z.
 # The idea behind axpymz!() is to perform the computation in one pass over the arrays. The output is the same as 
 # > @devec y = y + a*x - b*z
-function axpymbz!(j::Int, y::DenseArray{Float32,1}, a::Float32, x::DenseArray{Float32,}, b::Float32, z::DenseArray{Float32,1})
+function axpymbz!(j::Int, y::DenseArray{Float32,1}, a::Float32, x::DenseArray{Float32,1}, b::Float32, z::DenseArray{Float32,1})
 	y[j] + a*x[j] - b*z[j]
 end
 
-function axpymbz!(y::Array{Float32,1}, a, x::Array{Float32,1}, b, z::Array{Float32,1}; p::Int = length(y)) 
+function axpymbz!(y::Array{Float32,1}, a::Float32, x::Array{Float32,1}, b::Float32, z::Array{Float32,1}; p::Int = length(y)) 
 	@inbounds for i = 1:p
 		y[i] = axpymbz!(i, y, a, x, b, z) 
 	end
 end
 
 
-function axpymbz!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}; p::Int = length(y)) 
-	@sync @inbounds @parallel for i = 1:p
-		y[i] = y[i] + a*x[i] - b*z[i]
-	end
+#function axpymbz!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}; p::Int = length(y)) 
+#	@sync @inbounds @parallel for i = 1:p
+#		y[i] = y[i] + a*x[i] - b*z[i]
+#	end
+#end
+
+
+function myrange(q::SharedArray{Float32,1})
+    idx = indexpids(q)
+    if idx == 0
+        # This worker is not assigned a piece
+        return 1:0, 1:0
+    end
+    nchunks = length(procs(q))
+    splits = [int(round(s)) for s in linspace(0,length(q),nchunks+1)]
+    return splits[idx]+1 : splits[idx+1]
 end
 
+function axpymbz_shared_chunk!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}, irange::UnitRange{Int})
+    @inbounds for i in irange
+        y[i] = axpymbz!(i,y,a,x,b,z)
+    end
+end
+
+axpymbz_shared!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
+
+function axpymbz!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}) 
+    @sync begin
+        for p in procs(y)
+            @async remotecall_wait(p, axpymbz_shared!, y, a, x, b, z)
+        end
+    end
+end
 
 #####################
 ### MAIN FUNCTION ###
@@ -186,7 +213,8 @@ end
 			# now want to update residuals with current best predictor
 			m = perm[k]
 			update_col!(tempn2, X, m, n=n, p=p)	# tempn2 now holds X[:,m]
-			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+#			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+			axpymbz!(res, betal, tempn, adb, tempn2)
 
 			# if necessary, compute inner product of current predictor against all other predictors
 			# save in our Dict for future reference
@@ -196,7 +224,8 @@ end
 			copy!(tempp, inner[m])
 
 			# also update df
-			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+#			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+			axpymbz!(df, betal, dotprods, adb, tempp)
 
 			# now swap best predictor with current predictor
 			j          = perm[i]

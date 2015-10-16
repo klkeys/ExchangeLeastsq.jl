@@ -41,24 +41,24 @@
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu
 @compat function exchange_leastsq!(
-	bvec     :: DenseArray{Float32,1}, 
+	bvec     :: SharedArray{Float32,1}, 
 	X        :: BEDFile, 
-	Y        :: DenseArray{Float32,1}, 
-	perm     :: DenseArray{Int,1}, 
+	Y        :: SharedArray{Float32,1}, 
+	perm     :: SharedArray{Int,1}, 
 	r        :: Int; 
-	inner    :: Dict{Int,DenseArray{Float32,1}} = Dict{Int,DenseArray{Float32,1}}(), 
-	means    :: DenseArray{Float32,1} = mean(Float32,x), 
-	invstds  :: DenseArray{Float32,1} = invstd(x, means),
-	nrmsq    :: DenseArray{Float32,1} = sumsq(Float32, x, shared=false, means=means, invstds=invstds), 
-	n        :: Int                   = length(Y), 
-	p        :: Int                   = size(X,2), 
-	df       :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	dotprods :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempp    :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	Xb       :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	res      :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn    :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn2   :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	inner    :: Dict{Int,SharedArray{Float32,1}} = Dict{Int,SharedArray{Float32,1}}(), 
+	means    :: SharedArray{Float32,1} = mean(Float32,x), 
+	invstds  :: SharedArray{Float32,1} = invstd(x, means),
+	nrmsq    :: SharedArray{Float32,1} = sumsq(Float32, x, shared=true, means=means, invstds=invstds), 
+	n        :: Int                    = length(Y), 
+	p        :: Int                    = size(X,2), 
+	df       :: SharedArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	dotprods :: SharedArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempp    :: SharedArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	Xb       :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	res      :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn    :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn2   :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
 	indices  :: BitArray{1}           = falses(p), 
 	window   :: Int                   = r, 
 	max_iter :: Int                   = 10000, 
@@ -166,7 +166,8 @@
 			# now want to update residuals with current best predictor
 			m = perm[k]
 			decompress_genotypes!(tempn2, X, m, means, invstds) # tempn now holds X[:,l]
-			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+#			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+			axpymbz!(res, betal, tempn, adb, tempn2)
 
 			# if necessary, compute inner product of current predictor against all other predictors
 			# save in our Dict for future reference
@@ -176,12 +177,13 @@
 			copy!(tempp, inner[m])
 
 			# also update df
-			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+#			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
+			axpymbz!(df, betal, dotprods, adb, tempp)
 
 			# now swap best predictor with current predictor
-			j          = perm[i]
-			perm[i]    = perm[k] 
-			perm[k]    = j 
+			j       = perm[i]
+			perm[i] = perm[k] 
+			perm[k] = j 
 			bvec[m] = adb
 			if k != i
 				bvec[j] = 0.0f0
@@ -241,13 +243,13 @@ end # end exchange_leastsq
 # klkeys@g.ucla.edu 
 @compat function one_fold(
 	x           :: BEDFile, 
-	y           :: DenseArray{Float32,1}, 
+	y           :: SharedArray{Float32,1}, 
 	path_length :: Int, 
-	folds       :: DenseArray{Int,1}, 
+	folds       :: SharedArray{Int,1}, 
 	fold        :: Int; 
-	means       :: DenseArray{Float32,1} = mean(Float32, x), 
-	invstds     :: DenseArray{Float32,1} = invstd(x, y=means), 
-	nrmsq       :: DenseArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
+	means       :: SharedArray{Float32,1} = mean(Float32, x), 
+	invstds     :: SharedArray{Float32,1} = invstd(x, y=means), 
+	nrmsq       :: SharedArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
 	p           :: Int  = size(x,2), 
 	max_iter    :: Int  = 1000, 
 	window      :: Int  = 20, 
@@ -272,7 +274,7 @@ end # end exchange_leastsq
 	b         = zeros(Float32, p)
 	betas     = zeros(Float32, p,path_length)
 	perm      = collect(1:p)
-	inner     = Dict{Int,DenseArray{Float32,1}}()
+	inner     = Dict{Int,SharedArray{Float32,1}}()
 
 	# declare all temporary arrays
 	df         = zeros(Float32, p)	# X'(Y - Xbeta)
@@ -355,13 +357,13 @@ end
 # klkeys@g.ucla.edu 
 @compat function cv_exlstsq(
 	x             :: BEDFile,
-	y             :: DenseArray{Float32,1}, 
+	y             :: SharedArray{Float32,1}, 
 	path_length   :: Int, 
 	numfolds      :: Int; 
-	nrmsq         :: DenseArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
-	means         :: DenseArray{Float32,1} = mean(Float32, x),
-	invstds       :: DenseArray{Float32,1} = invstd(x, y=means),
-	folds         :: DenseArray{Int,1}     = cv_get_folds(y,numfolds), 
+	nrmsq         :: SharedArray{Float32,1} = sumsq(x, shared=true, means=means, invstds=invstds), 
+	means         :: SharedArray{Float32,1} = mean(Float32, x),
+	invstds       :: SharedArray{Float32,1} = invstd(x, y=means),
+	folds         :: SharedArray{Int,1}     = cv_get_folds(y,numfolds), 
 	tol           :: Float32 = 1f-4, 
 	n             :: Int     = length(y),
 	p             :: Int     = size(x,2), 
@@ -376,7 +378,7 @@ end
 
 	# preallocate vectors used in xval	
 	mses    = zeros(Float32, path_length)	# vector to save mean squared errors
-	my_refs = cell(numfolds)		# cell array to store RemoteRefs
+	my_refs = cell(numfolds)		        # cell array to store RemoteRefs
 
 	# want to compute a path for each fold
 	# the folds are computed asynchronously
@@ -417,16 +419,16 @@ end
 	if compute_model
 		
 		# initialize beta vector
-		bp = zeros(Float32, p)
+		fill!(sdata(b), 0.0f0)
 		perm = collect(1:p)
 		x_inferred = zeros(Float32, n, k)
 
 		# first use exchange algorithm to extract model
-		bp = exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
+		exchange_leastsq!(b, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
 
 		# which components of beta are nonzero?
 		# cannot use binary indices here since we need to return Int indices
-		inferred_model = find( function f(x) x.!= 0.0f0; end, bp)
+		inferred_model = find( x -> x.!= 0.0f0, b)
 
 		# allocate the submatrix of x corresponding to the inferred model
 		decompress_genotypes!(x_inferred, x, inferred_model, means=means, invstds=invstds)
@@ -435,8 +437,8 @@ end
 		# return it with the vector of MSEs
 		Xty = BLAS.gemv('T', 1.0f0, x_inferred, y)	
 		XtX = BLAS.gemm('T', 'N', 1.0f0, x_inferred, x_inferred)
-		b   = XtX \ Xty
-		return mses, b, inferred_model
+		b2   = XtX \ Xty
+		return mses, b2, inferred_model
 	end
 
 	return mses
