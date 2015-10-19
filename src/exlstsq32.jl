@@ -7,44 +7,44 @@
 # The silly name is based on BLAS axpy (A*X Plus Y), except that this function performs A*X Plus Y Minus B*Z.
 # The idea behind axpymz!() is to perform the computation in one pass over the arrays. The output is the same as 
 # > @devec y = y + a*x - b*z
-function axpymbz!(j::Int, y::DenseArray{Float32,1}, a::Float32, x::DenseArray{Float32,1}, b::Float32, z::DenseArray{Float32,1})
+function axpymbz!(j::Int, y::DenseVector{Float32}, a::Float32, x::DenseVector{Float32}, b::Float32, z::DenseVector{Float32})
 	y[j] + a*x[j] - b*z[j]
 end
 
-function axpymbz!(y::Array{Float32,1}, a::Float32, x::Array{Float32,1}, b::Float32, z::Array{Float32,1}; p::Int = length(y)) 
+function axpymbz!(y::Vector{Float32}, a::Float32, x::Vector{Float32}, b::Float32, z::Vector{Float32}; p::Int = length(y)) 
 	@inbounds for i = 1:p
 		y[i] = axpymbz!(i, y, a, x, b, z) 
 	end
 end
 
 
-#function axpymbz!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}; p::Int = length(y)) 
+#function axpymbz!(y::SharedVector{Float32}, a::Float32, x::SharedVector{Float32}, b::Float32, z::SharedVector{Float32}; p::Int = length(y)) 
 #	@sync @inbounds @parallel for i = 1:p
 #		y[i] = y[i] + a*x[i] - b*z[i]
 #	end
 #end
 
 
-function myrange(q::SharedArray{Float32,1})
+function myrange(q::SharedVector{Float32})
     idx = indexpids(q)
     if idx == 0
         # This worker is not assigned a piece
         return 1:0, 1:0
     end
     nchunks = length(procs(q))
-    splits = [int(round(s)) for s in linspace(0,length(q),nchunks+1)]
+    splits = [round(Int,s) for s in linspace(0,length(q),nchunks+1)]
     return splits[idx]+1 : splits[idx+1]
 end
 
-function axpymbz_shared_chunk!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}, irange::UnitRange{Int})
+function axpymbz_shared_chunk!(y::SharedVector{Float32}, a::Float32, x::SharedVector{Float32}, b::Float32, z::SharedVector{Float32}, irange::UnitRange{Int})
     @inbounds for i in irange
         y[i] = axpymbz!(i,y,a,x,b,z)
     end
 end
 
-axpymbz_shared!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
+axpymbz_shared!(y::SharedVector{Float32}, a::Float32, x::SharedVector{Float32}, b::Float32, z::SharedVector{Float32}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
 
-function axpymbz!(y::SharedArray{Float32,1}, a::Float32, x::SharedArray{Float32,1}, b::Float32, z::SharedArray{Float32,1}) 
+function axpymbz!(y::SharedVector{Float32}, a::Float32, x::SharedVector{Float32}, b::Float32, z::SharedVector{Float32}) 
     @sync begin
         for p in procs(y)
             @async remotecall_wait(p, axpymbz_shared!, y, a, x, b, z)
@@ -88,28 +88,28 @@ end
 #    Defaults to r (potentially exchange all current predictors). Decreasing this quantity tells the algorithm to search through 
 #    fewer current active predictors, which can decrease compute time but can also degrade model recovery performance. 
 # -- max_iter is the maximum permissible number of iterations. Defaults to 100.
-#    Defaults to an empty dict with typeasserts Int64 for the keys and Array{Float32,1} for the values.
+#    Defaults to an empty dict with typeasserts Int64 for the keys and Vector{Float32} for the values.
 # -- tol is the convergence tolerance. Defaults to 1e-6.
 # -- quiet is a boolean to control output. Defaults to false (full output).
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu
-@compat function exchange_leastsq!(
-	bvec     :: DenseArray{Float32,1}, 
-	X        :: DenseArray{Float32,2}, 
-	Y        :: DenseArray{Float32,1}, 
-	perm     :: DenseArray{Int,1}, 
+function exchange_leastsq!(
+	bvec     :: DenseVector{Float32}, 
+	X        :: DenseMatrix{Float32}, 
+	Y        :: DenseVector{Float32}, 
+	perm     :: DenseVector{Int}, 
 	r        :: Int; 
-	inner    :: Dict{Int, DenseArray{Float32,1}} = Dict{Int,DenseArray{Float32,1}}(), 
+	inner    :: Dict{Int, DenseVector{Float32}} = Dict{Int,DenseVector{Float32}}(), 
 	n        :: Int = length(Y), 
 	p        :: Int = size(X,2), 
-	nrmsq    :: DenseArray{Float32,1} = vec(sumabs2(X,1)), 
-	df       :: DenseArray{Float32,1} = zeros(Float32, p), 
-	dotprods :: DenseArray{Float32,1} = zeros(Float32, p), 
-	tempp    :: DenseArray{Float32,1} = zeros(Float32, p), 
-	res      :: DenseArray{Float32,1} = zeros(Float32, n), 
-	tempn    :: DenseArray{Float32,1} = zeros(Float32, n), 
-	tempn2   :: DenseArray{Float32,1} = zeros(Float32, n), 
+	nrmsq    :: DenseVector{Float32} = vec(sumabs2(X,1)), 
+	df       :: DenseVector{Float32} = zeros(Float32, p), 
+	dotprods :: DenseVector{Float32} = zeros(Float32, p), 
+	tempp    :: DenseVector{Float32} = zeros(Float32, p), 
+	res      :: DenseVector{Float32} = zeros(Float32, n), 
+	tempn    :: DenseVector{Float32} = zeros(Float32, n), 
+	tempn2   :: DenseVector{Float32} = zeros(Float32, n), 
 	window   :: Int     = r,
 	max_iter :: Int     = 10000, 
 	tol      :: Float32 = 1f-6, 
@@ -243,7 +243,7 @@ end
 
 		# test for descent failure 
 		# if no descent failure, then test for convergence
-		# if not converged, then save RSS and continue
+		 if not converged, then save RSS and continue
 		ascent    = rss > old_rss + tol
 		converged = abs(old_rss - rss) / abs(old_rss + 1) < tol 
 

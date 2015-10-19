@@ -40,25 +40,25 @@
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu
-@compat function exchange_leastsq!(
-	bvec     :: SharedArray{Float32,1}, 
+function exchange_leastsq!(
+	vec     :: SharedVector{Float32}, 
 	X        :: BEDFile, 
-	Y        :: SharedArray{Float32,1}, 
-	perm     :: SharedArray{Int,1}, 
+	Y        :: SharedVector{Float32}, 
+	perm     :: SharedVector{Int}, 
 	r        :: Int; 
-	inner    :: Dict{Int,SharedArray{Float32,1}} = Dict{Int,SharedArray{Float32,1}}(), 
-	means    :: SharedArray{Float32,1} = mean(Float32,x), 
-	invstds  :: SharedArray{Float32,1} = invstd(x, means),
-	nrmsq    :: SharedArray{Float32,1} = sumsq(Float32, x, shared=true, means=means, invstds=invstds), 
+	inner    :: Dict{Int,SharedVector{Float32}} = Dict{Int,SharedVector{Float32}}(), 
+	means    :: SharedVector{Float32} = mean(Float32,x), 
+	invstds  :: SharedVector{Float32} = invstd(x, means),
+	nrmsq    :: SharedVector{Float32} = sumsq(Float32, x, shared=true, means=means, invstds=invstds), 
 	n        :: Int                    = length(Y), 
 	p        :: Int                    = size(X,2), 
-	df       :: SharedArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	dotprods :: SharedArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempp    :: SharedArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	Xb       :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	res      :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn    :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn2   :: SharedArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	df       :: SharedVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	dotprods :: SharedVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempp    :: SharedVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	Xb       :: SharedVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	res      :: SharedVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn    :: SharedVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn2   :: SharedVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
 	indices  :: BitArray{1}           = falses(p), 
 	window   :: Int                   = r, 
 	max_iter :: Int                   = 10000, 
@@ -241,15 +241,15 @@ end # end exchange_leastsq
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu 
-@compat function one_fold(
+function one_fold(
 	x           :: BEDFile, 
-	y           :: SharedArray{Float32,1}, 
+	y           :: SharedVector{Float32}, 
 	path_length :: Int, 
-	folds       :: SharedArray{Int,1}, 
+	folds       :: SharedVector{Int}, 
 	fold        :: Int; 
-	means       :: SharedArray{Float32,1} = mean(Float32, x), 
-	invstds     :: SharedArray{Float32,1} = invstd(x, y=means), 
-	nrmsq       :: SharedArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
+	means       :: SharedVector{Float32} = mean(Float32, x), 
+	invstds     :: SharedVector{Float32} = invstd(x, y=means), 
+	nrmsq       :: SharedVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
 	p           :: Int  = size(x,2), 
 	max_iter    :: Int  = 1000, 
 	window      :: Int  = 20, 
@@ -274,7 +274,7 @@ end # end exchange_leastsq
 	b         = zeros(Float32, p)
 	betas     = zeros(Float32, p,path_length)
 	perm      = collect(1:p)
-	inner     = Dict{Int,SharedArray{Float32,1}}()
+	inner     = Dict{Int,SharedVector{Float32}}()
 
 	# declare all temporary arrays
 	df         = zeros(Float32, p)	# X'(Y - Xbeta)
@@ -355,15 +355,15 @@ end
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu 
-@compat function cv_exlstsq(
+function cv_exlstsq(
 	x             :: BEDFile,
-	y             :: SharedArray{Float32,1}, 
+	y             :: SharedVector{Float32}, 
 	path_length   :: Int, 
 	numfolds      :: Int; 
-	nrmsq         :: SharedArray{Float32,1} = sumsq(x, shared=true, means=means, invstds=invstds), 
-	means         :: SharedArray{Float32,1} = mean(Float32, x),
-	invstds       :: SharedArray{Float32,1} = invstd(x, y=means),
-	folds         :: SharedArray{Int,1}     = cv_get_folds(y,numfolds), 
+	nrmsq         :: SharedVector{Float32} = sumsq(x, shared=true, means=means, invstds=invstds), 
+	means         :: SharedVector{Float32} = mean(Float32, x),
+	invstds       :: SharedVector{Float32} = invstd(x, y=means),
+	folds         :: SharedVector{Int}     = cv_get_folds(y,numfolds), 
 	tol           :: Float32 = 1f-4, 
 	n             :: Int     = length(y),
 	p             :: Int     = size(x,2), 

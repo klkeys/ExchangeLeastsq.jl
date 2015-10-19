@@ -5,7 +5,6 @@ using RegressionTools
 using PLINK
 using Distances: euclidean, chebyshev
 using StatsBase: sample
-using Compat
 using OpenCL
 
 export exchange_leastsq

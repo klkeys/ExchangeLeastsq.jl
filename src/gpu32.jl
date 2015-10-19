@@ -43,26 +43,26 @@ cl = OpenCL
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu
-@compat function exchange_leastsq!(
-	bvec        :: DenseArray{Float32,1}, 
+function exchange_leastsq!(
+	bvec        :: DenseVector{Float32}, 
 	X           :: BEDFile, 
-	Y           :: DenseArray{Float32,1}, 
-	perm        :: DenseArray{Int,1}, 
+	Y           :: DenseVector{Float32}, 
+	perm        :: DenseVector{Int}, 
 	r           :: Int,
 	kernfile    :: ASCIIString; 
-	inner       :: Dict{Int,DenseArray{Float32,1}} = Dict{Int,DenseArray{Float32,1}}(), 
-	means       :: DenseArray{Float32,1} = mean(Float32,x), 
-	invstds     :: DenseArray{Float32,1} = invstd(x, means),
-	nrmsq       :: DenseArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
+	inner       :: Dict{Int,DenseVector{Float32}} = Dict{Int,DenseVector{Float32}}(), 
+	means       :: DenseVector{Float32} = mean(Float32,x), 
+	invstds     :: DenseVector{Float32} = invstd(x, means),
+	nrmsq       :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
 	n           :: Int = length(Y), 
 	p           :: Int = size(X,2), 
-	df          :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	dotprods    :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempp       :: DenseArray{Float32,1} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	Xb          :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	res         :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn       :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn2      :: DenseArray{Float32,1} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	df          :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	dotprods    :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempp       :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
+	Xb          :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	res         :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn       :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
+	tempn2      :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
 	indices     :: BitArray{1}           = falses(p), 
 	window      :: Int                   = r, 
 	max_iter    :: Int                   = 10000, 
@@ -320,15 +320,15 @@ end # end exchange_leastsq
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu 
-@compat function one_fold(
+function one_fold(
 	x           :: BEDFile, 
-	y           :: DenseArray{Float32,1}, 
+	y           :: DenseVector{Float32}, 
 	path_length :: Int, 
-	folds       :: DenseArray{Int,1}, 
+	folds       :: DenseVector{Int}, 
 	fold        :: Int; 
-	means       :: DenseArray{Float32,1} = mean(Float32, x), 
-	invstds     :: DenseArray{Float32,1} = invstd(x, y=means), 
-	nrmsq       :: DenseArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
+	means       :: DenseVector{Float32} = mean(Float32, x), 
+	invstds     :: DenseVector{Float32} = invstd(x, y=means), 
+	nrmsq       :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
 	p           :: Int  = size(x,2), 
 	max_iter    :: Int  = 1000, 
 	window      :: Int  = 20, 
@@ -353,7 +353,7 @@ end # end exchange_leastsq
 	b         = zeros(Float32, p)
 	betas     = zeros(Float32, p,path_length)
 	perm      = collect(1:p)
-	inner     = Dict{Int,DenseArray{Float32,1}}()
+	inner     = Dict{Int,DenseVector{Float32}}()
 
 	# declare all temporary arrays
 	df         = zeros(Float32, p)	# X'(Y - Xbeta)
@@ -434,15 +434,15 @@ end
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu 
-@compat function cv_exlstsq(
+function cv_exlstsq(
 	x             :: BEDFile,
-	y             :: DenseArray{Float32,1}, 
+	y             :: DenseVector{Float32}, 
 	path_length   :: Int, 
 	numfolds      :: Int; 
-	nrmsq         :: DenseArray{Float32,1} = sumsq(x, shared=false, means=means, invstds=invstds), 
-	means         :: DenseArray{Float32,1} = mean(Float32, x),
-	invstds       :: DenseArray{Float32,1} = invstd(x, y=means),
-	folds         :: DenseArray{Int,1}     = cv_get_folds(y,numfolds), 
+	nrmsq         :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
+	means         :: DenseVector{Float32} = mean(Float32, x),
+	invstds       :: DenseVector{Float32} = invstd(x, y=means),
+	folds         :: DenseVector{Int}     = cv_get_folds(y,numfolds), 
 	tol           :: Float32 = 1f-4, 
 	n             :: Int     = length(y),
 	p             :: Int     = size(x,2), 

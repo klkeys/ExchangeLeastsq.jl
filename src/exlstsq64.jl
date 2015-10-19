@@ -7,44 +7,44 @@
 # The silly name is based on BLAS axpy (A*X Plus Y), except that this function performs A*X Plus Y Minus B*Z.
 # The idea behind axpymz!() is to perform the computation in one pass over the arrays. The output is the same as 
 # > @devec y = y + a*x - b*z
-function axpymbz!(j::Int, y::DenseArray{Float64,1}, a::Float64, x::DenseArray{Float64,1}, b::Float64, z::DenseArray{Float64,1})
+function axpymbz!(j::Int, y::DenseVector{Float64}, a::Float64, x::DenseVector{Float64}, b::Float64, z::DenseVector{Float64})
 	y[j] + a*x[j] - b*z[j]
 end
 
-function axpymbz!(y::Array{Float64,1}, a::Float64, x::Array{Float64,1}, b::Float64, z::Array{Float64,1}; p::Int = length(y)) 
+function axpymbz!(y::Vector{Float64}, a::Float64, x::Vector{Float64}, b::Float64, z::Vector{Float64}; p::Int = length(y)) 
 	@inbounds for i = 1:p
 		y[i] = axpymbz!(i, y, a, x, b, z) 
 	end
 end
 
 
-#function axpymbz!(y::SharedArray{Float64,1}, a::Float64, x::SharedArray{Float64,1}, b::Float64, z::SharedArray{Float64,1}; p::Int = length(y)) 
+#function axpymbz!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}; p::Int = length(y)) 
 #	@sync @inbounds @parallel for i = 1:p
 #		y[i] = y[i] + a*x[i] - b*z[i]
 #	end
 #end
 
 
-function myrange(q::SharedArray{Float64,1})
+function myrange(q::SharedVector{Float64})
     idx = indexpids(q)
     if idx == 0
         # This worker is not assigned a piece
         return 1:0, 1:0
     end
     nchunks = length(procs(q))
-    splits = [int(round(s)) for s in linspace(0,length(q),nchunks+1)]
+    splits = [round(Int,s) for s in linspace(0,length(q),nchunks+1)]
     return splits[idx]+1 : splits[idx+1]
 end
 
-function axpymbz_shared_chunk!(y::SharedArray{Float64,1}, a::Float64, x::SharedArray{Float64,1}, b::Float64, z::SharedArray{Float64,1}, irange::UnitRange{Int})
+function axpymbz_shared_chunk!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}, irange::UnitRange{Int})
     @inbounds for i in irange
         y[i] = axpymbz!(i,y,a,x,b,z)
     end
 end
 
-axpymbz_shared!(y::SharedArray{Float64,1}, a::Float64, x::SharedArray{Float64,1}, b::Float64, z::SharedArray{Float64,1}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
+axpymbz_shared!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
 
-function axpymbz!(y::SharedArray{Float64,1}, a::Float64, x::SharedArray{Float64,1}, b::Float64, z::SharedArray{Float64,1}) 
+function axpymbz!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}) 
     @sync begin
         for p in procs(y)
             @async remotecall_wait(p, axpymbz_shared!, y, a, x, b, z)
@@ -88,28 +88,28 @@ end
 #    Defaults to r (potentially exchange all current predictors). Decreasing this quantity tells the algorithm to search through 
 #    fewer current active predictors, which can decrease compute time but can also degrade model recovery performance. 
 # -- max_iter is the maximum permissible number of iterations. Defaults to 100.
-#    Defaults to an empty dict with typeasserts Int64 for the keys and Array{Float64,1} for the values.
+#    Defaults to an empty dict with typeasserts Int64 for the keys and Vector{Float64} for the values.
 # -- tol is the convergence tolerance. Defaults to 1e-6.
 # -- quiet is a boolean to control output. Defaults to false (full output).
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu
-@compat function exchange_leastsq!(
-	bvec     :: DenseArray{Float64,1}, 
-	X        :: DenseArray{Float64,2}, 
-	Y        :: DenseArray{Float64,1}, 
-	perm     :: DenseArray{Int,1}, 
+function exchange_leastsq!(
+	bvec     :: DenseVector{Float64}, 
+	X        :: DenseMatrix{Float64}, 
+	Y        :: DenseVector{Float64}, 
+	perm     :: DenseVector{Int}, 
 	r        :: Int; 
-	inner    :: Dict{Int, DenseArray{Float64,1}} = Dict{Int,DenseArray{Float64,1}}(), 
+	inner    :: Dict{Int, DenseVector{Float64}} = Dict{Int,DenseVector{Float64}}(), 
 	n        :: Int = length(Y), 
 	p        :: Int = size(X,2), 
-	nrmsq    :: DenseArray{Float64,1} = vec(sumabs2(X,1)), 
-	df       :: DenseArray{Float64,1} = zeros(Float64, p), 
-	dotprods :: DenseArray{Float64,1} = zeros(Float64, p), 
-	tempp    :: DenseArray{Float64,1} = zeros(Float64, p), 
-	res      :: DenseArray{Float64,1} = zeros(Float64, n), 
-	tempn    :: DenseArray{Float64,1} = zeros(Float64, n), 
-	tempn2   :: DenseArray{Float64,1} = zeros(Float64, n), 
+	nrmsq    :: DenseVector{Float64} = vec(sumabs2(X,1)), 
+	df       :: DenseVector{Float64} = zeros(Float64, p), 
+	dotprods :: DenseVector{Float64} = zeros(Float64, p), 
+	tempp    :: DenseVector{Float64} = zeros(Float64, p), 
+	res      :: DenseVector{Float64} = zeros(Float64, n), 
+	tempn    :: DenseVector{Float64} = zeros(Float64, n), 
+	tempn2   :: DenseVector{Float64} = zeros(Float64, n), 
 	window   :: Int     = r,
 	max_iter :: Int     = 10000, 
 	tol      :: Float64 = 1e-6, 

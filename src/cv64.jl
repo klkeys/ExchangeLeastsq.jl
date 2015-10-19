@@ -52,7 +52,7 @@ function one_fold(
 	perm      = collect(1:p)
 
 	# allocate Dict to store inner prodcuts
-	@compat inner = Dict{Int,DenseArray{Float64,1}}()
+	inner = Dict{Int,DenseArray{Float64,1}}()
 
 	# declare all temporary arrays
 	res        = zeros(Float64, n)	# Y - Xbeta
@@ -150,7 +150,7 @@ end
 #
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu 
-@compat function cv_exlstsq(
+function cv_exlstsq(
 	x             :: DenseArray{Float64,2}, 
 	y             :: DenseArray{Float64,1}, 
 	path_length   :: Int, 
