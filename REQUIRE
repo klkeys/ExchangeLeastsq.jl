@@ -1,7 +1,7 @@
 julia 0.4
-RegressionTools 0.1
+RegressionTools 
 OpenCL 0.3.5
 Distances 0.2.1
 StatsBase 0.7.4
 GLMNet 0.0.5
-PLINK 0.1
+PLINK 
