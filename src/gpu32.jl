@@ -51,47 +51,49 @@ function exchange_leastsq!(
 	r           :: Int,
 	kernfile    :: ASCIIString; 
 	inner       :: Dict{Int,DenseVector{Float32}} = Dict{Int,DenseVector{Float32}}(), 
-	means       :: DenseVector{Float32} = mean(Float32,x), 
-	invstds     :: DenseVector{Float32} = invstd(x, means),
-	nrmsq       :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
+	pids        :: DenseVector{Int}     = procs(),
+	means       :: DenseVector{Float32} = mean(Float32,x, shared=true, pids=pids), 
+	invstds     :: DenseVector{Float32} = invstd(x, means, shared=true, pids=pids),
+	nrmsq       :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds, pids=pids), 
 	n           :: Int = length(Y), 
 	p           :: Int = size(X,2), 
-	df          :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	dotprods    :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempp       :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	Xb          :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	res         :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn       :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn2      :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	indices     :: BitArray{1}           = falses(p), 
-	window      :: Int                   = r, 
-	max_iter    :: Int                   = 10000, 
-	tol         :: Float32               = 1f-4, 
-	quiet       :: Bool                  = false,
-	wg_size     :: Int                   = 512,
-	y_chunks    :: Int                   = div(n, wg_size) + (n % wg_size != 0 ? 1 : 0),
-    y_blocks    :: Int                   = div(y_chunks, wg_size) + (y_chunks % wg_size != 0 ? 1 : 0), 
-	device      :: cl.Device             = last(cl.devices(:gpu)),
-	ctx         :: cl.Context            = cl.Context(device), 
-	queue       :: cl.CmdQueue           = cl.CmdQueue(ctx),
-	x_buff      :: cl.Buffer             = cl.Buffer(Int8,    ctx, (:r,  :copy), hostbuf = sdata(X.x)),
-	y_buff      :: cl.Buffer             = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(res)),
-	m_buff      :: cl.Buffer             = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(means)),
-	p_buff      :: cl.Buffer             = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(invstds)),
-	df_buff     :: cl.Buffer             = cl.Buffer(Float32, ctx, (:rw, :copy), hostbuf = sdata(df)),
-	red_buff    :: cl.Buffer             = cl.Buffer(Float32, ctx, (:rw), p * y_chunks),
-	xty_buff    :: cl.Buffer             = cl.Buffer(Float32, ctx, (:rw), p),
-	genofloat   :: cl.LocalMem           = cl.LocalMem(Float32, wg_size),
-#	plink_kernels :: ASCIIString         = open(readall(kernfile)),
-	program     :: cl.Program            = cl.Program(ctx, source=kernfile) |> cl.build!,
-	xtyk        :: cl.Kernel             = cl.Kernel(program, "compute_xt_times_vector"),
-	rxtyk       :: cl.Kernel             = cl.Kernel(program, "reduce_xt_vec_chunks"),
-	wg_size32   :: Int32                 = convert(Int32, wg_size),
-	n32         :: Int32                 = convert(Int32, n),
-	p32         :: Int32                 = convert(Int32, p),
-	y_chunks32  :: Int32                 = convert(Int32, y_chunks),
-	y_blocks32  :: Int32                 = convert(Int32, y_blocks),
-	blocksize32 :: Int32                 = convert(Int32, X.blocksize)
+	df          :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+	dotprods    :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+	tempp       :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+	Xb          :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+	res         :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+	tempn       :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+	tempn2      :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+	mask_n      :: DenseVector{Int}     = ones(Int,n),
+	indices     :: BitArray{1}          = falses(p), 
+	window      :: Int                  = r, 
+	max_iter    :: Int                  = 100, 
+	tol         :: Float32              = 1f-4, 
+	quiet       :: Bool                 = false,
+	wg_size     :: Int                  = 512,
+	y_chunks    :: Int                  = div(n, wg_size) + (n % wg_size != 0 ? 1 : 0),
+    y_blocks    :: Int                  = div(y_chunks, wg_size) + (y_chunks % wg_size != 0 ? 1 : 0), 
+	device      :: cl.Device            = last(cl.devices(:gpu)),
+	ctx         :: cl.Context           = cl.Context(device), 
+	queue       :: cl.CmdQueue          = cl.CmdQueue(ctx),
+	x_buff      :: cl.Buffer            = cl.Buffer(Int8,    ctx, (:r,  :copy), hostbuf = sdata(X.x)),
+	y_buff      :: cl.Buffer            = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(res)),
+	m_buff      :: cl.Buffer            = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(means)),
+	p_buff      :: cl.Buffer            = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(invstds)),
+	df_buff     :: cl.Buffer            = cl.Buffer(Float32, ctx, (:rw, :copy), hostbuf = sdata(df)),
+	red_buff    :: cl.Buffer            = cl.Buffer(Float32, ctx, (:rw), p * y_chunks),
+	xty_buff    :: cl.Buffer            = cl.Buffer(Float32, ctx, (:rw), p),
+	mask_buff   :: cl.Buffer            = cl.Buffer(Int,     ctx, (:r,  :copy), hostbuf = sdata(mask_n)),
+	genofloat   :: cl.LocalMem          = cl.LocalMem(Float32, wg_size),
+	program     :: cl.Program           = cl.Program(ctx, source=kernfile) |> cl.build!,
+	xtyk        :: cl.Kernel            = cl.Kernel(program, "compute_xt_times_vector"),
+	rxtyk       :: cl.Kernel            = cl.Kernel(program, "reduce_xt_vec_chunks"),
+	wg_size32   :: Int32                = convert(Int32, wg_size),
+	n32         :: Int32                = convert(Int32, n),
+	p32         :: Int32                = convert(Int32, p),
+	y_chunks32  :: Int32                = convert(Int32, y_chunks),
+	y_blocks32  :: Int32                = convert(Int32, y_blocks),
+	blocksize32 :: Int32                = convert(Int32, X.blocksize)
 )
 
 	# error checking
@@ -119,21 +121,21 @@ function exchange_leastsq!(
 	idx  = 0	# used for indexing
 
 	# declare all floats
-	a       = 0.0f0
-	b       = 0.0f0
-	adb     = 0.0f0	# = a / b
-	c       = 0.0f0
-	d       = 0.0f0
-	betal   = 0.0f0	# store lth component of bvec 
-	rss     = Inf32	# residual sum of squares || Y - XB ||^2
-	old_rss = Inf32	# previous residual sum of squares 
+	a       = zero(Float32)
+	b       = zero(Float32)
+	adb     = zero(Float32)	# = a / b
+	c       = zero(Float32)
+	d       = zero(Float32)
+	betal   = zero(Float32)	# store lth component of bvec 
+	rss     = Inf32			# residual sum of squares || Y - XB ||^2
+	old_rss = Inf32			# previous residual sum of squares 
 
 	# obtain top r components of bvec in magnitude
-	selectpermk!(perm,bvec, r, p=p)
+	selectperm!(perm, sdata(bvec), k, by=abs, rev=true, initialized=true)
 	update_indices!(indices, bvec, p=p)
 
 	# update X*b
-	xb!(Xb,X,bvec,indices,r, means=means, invstds=invstds)
+	xb!(Xb,X,bvec,indices,r, means=means, invstds=invstds, pids=pids)
 
 	# update residuals based on Xb 
 	difference!(res, Y, Xb, n=n)
@@ -144,7 +146,7 @@ function exchange_leastsq!(
 	# compute inner products of X and residuals 
 	# this is basically the negative gradient
 #	xty!(df, X, res, means=means, invstds=invstds)
-	xty!(df, df_buff, X, x_buff, res, y_buff, queue, means, m_buff, invstds, p_buff, red_buff, xtyk, rxtyk, wg_size, y_chunks, n, p, X.p2, n32, p32, y_chunks32, blocksize32, wg_size32, y_blocks32, genofloat)
+	xty!(df, df_buff, X, x_buff, res, y_buff, mask_n, mask_buff, queue, means, m_buff, invstds, p_buff, red_buff, xtyk, rxtyk, wg_size, y_chunks, n, p, X.p2, n32, p32, y_chunks32, blocksize32, wg_size32, y_blocks32, genofloat)
 
 	# outer loop controls number of total iterations for algorithm run on one r
 	for iter = 1:(max_iter)
@@ -166,7 +168,7 @@ function exchange_leastsq!(
 			# the if/else statement below is the same as but faster than
 			# > dotprods = get!(inner, l, BLAS.gemv('T', 1.0, X, tempn))
 			if !haskey(inner, l)
-				inner[l] = xty(X, tempn, kernfile, means=means, invstds=invstds,
+				inner[l] = xty(X, tempn, kernfile, mask_n, means=means, invstds=invstds,
 	n=X.n, 
 	p=X.p, 
 	p2=X.p2, 
@@ -192,7 +194,9 @@ function exchange_leastsq!(
 	df_buff=df_buff,
 	red_buff=red_buff,
 	xty_buff=xty_buff,
-	genofloat=genofloat)
+	genofloat=genofloat,
+	pids=pids,
+	mask_buff=mask_buff)
 			end
 			copy!(dotprods,inner[l])
 
@@ -226,7 +230,7 @@ function exchange_leastsq!(
 			# if necessary, compute inner product of current predictor against all other predictors
 			# save in our Dict for future reference
 			if !haskey(inner, m)
-				inner[m] = xty(X, tempn2, kernfile, means=means, invstds=invstds,
+				inner[m] = xty(X, tempn2, kernfile, mask_n, means=means, invstds=invstds,
 	n=X.n, 
 	p=X.p, 
 	p2=X.p2, 
@@ -252,7 +256,9 @@ function exchange_leastsq!(
 	df_buff=df_buff,
 	red_buff=red_buff,
 	xty_buff=xty_buff,
-	genofloat=genofloat)
+	genofloat=genofloat,
+	pids=pids,
+	mask_buff=mask_buff)
 			end
 			copy!(tempp, inner[m])
 
@@ -265,7 +271,7 @@ function exchange_leastsq!(
 			perm[k]    = j 
 			bvec[m] = adb
 			if k != i
-				bvec[j] = 0.0f0
+				bvec[j] = zero(Float32)
 			end
 
 		end # end middle loop over predictors 
@@ -291,7 +297,7 @@ function exchange_leastsq!(
 
 	# at this point, maximum iterations reached
 	# warn and return bvec
-	throw(error("Maximum iterations $(max_iter) reached! Return value may not be correct.\n"))
+	warn("Maximum iterations $(max_iter) reached! Return value may not be correct.\n")
 	return bvec
 
 end # end exchange_leastsq
@@ -314,7 +320,7 @@ end # end exchange_leastsq
 #
 # Optional Arguments:
 # -- n is the number of samples. Defaults to length(y).
-# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1e-4.
+# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1f-4.
 # -- max_iter caps the number of permissible iterations in the algorithm. Defaults to 1000.
 # -- quiet is a Boolean to activate output. Defaults to true (no output).
 #
@@ -326,14 +332,23 @@ function one_fold(
 	path_length :: Int, 
 	folds       :: DenseVector{Int}, 
 	fold        :: Int; 
-	means       :: DenseVector{Float32} = mean(Float32, x), 
-	invstds     :: DenseVector{Float32} = invstd(x, y=means), 
-	nrmsq       :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
-	p           :: Int  = size(x,2), 
-	max_iter    :: Int  = 1000, 
-	window      :: Int  = 20, 
-	quiet       :: Bool = true 
+	pids        :: DenseVector{Int}     = procs(),
+	means       :: DenseVector{Float32} = mean(Float32, x, shared=true, pids=pids), 
+	invstds     :: DenseVector{Float32} = invstd(x, y=means, shared=true, pids=pids), 
+	nrmsq       :: DenseVector{Float32} = sumsq(x, shared=true, means=means, invstds=invstds, pids=pids), 
+	tol         :: Float32              = 1f-4,
+	max_iter    :: Int                  = 100, 
+	window      :: Int                  = 20, 
+	n           :: Int                  = length(y),
+	p           :: Int                  = size(x,2),
+	wg_size     :: Int                  = 512,
+	devidx      :: Int                  = 1,
+	header      :: Bool                 = false,
+	quiet       :: Bool                 = true 
 )
+	# get list of available GPU devices
+	# var device gets pointer to device indexed by variable devidx 
+	device = cl.devices(:gpu)[devidx]
 
 	# find testing indices
 	test_idx = folds .== fold
@@ -345,61 +360,169 @@ function one_fold(
 	train_idx = !test_idx
 
 	# how big is training sample?
-	const n = length(train_idx)
+	train_size = length(train_idx)
+	test_size  = length(test_idx)
 
-	# allocate the arrays for the training set
-	x_train   = x[train_idx,:]
-	y_train   = y[train_idx] 
-	b         = zeros(Float32, p)
-	betas     = zeros(Float32, p,path_length)
-	perm      = collect(1:p)
-	inner     = Dict{Int,DenseVector{Float32}}()
+	# GPU code requires Int variant of training indices, so do explicit conversion
+	train_idx = convert(Vector{Int}, train_idx)
+	test_idx  = convert(Vector{Int}, test_idx)
+
+	# declare sparse matrix for output
+	betas   = spzeros(Float32, p, path_length)
 
 	# declare all temporary arrays
-	df         = zeros(Float32, p)	# X'(Y - Xbeta)
-	tempp      = zeros(Float32, p)	# temporary array of length p
-	dotprods   = zeros(Float32, p)	# hold in memory the dot products for current index
-	bout       = zeros(Float32, p)	# output array for beta
-	tempn      = zeros(Float32, n)	# temporary array of length n 
-	tempn2     = zeros(Float32, n)	# temporary array of length n 
-	res        = zeros(Float32, n)	# Y - Xbeta
+	b        = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)
+	perm     = SharedArray(Int, p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
+	inner    = Dict{Int,DenseVector{Float32}}()
+	df       = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)		# (negative) gradient 
+	tempp    = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)		# temporary array of length p
+	dotprods = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)	# hold in memory the dot products for current index
+	bout     = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)	# output array for beta
+	tempn    = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)	   	# temporary array of n floats 
+	tempn2   = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)	   	# temporary array of n floats 
+	res      = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)		# for || Y - XB ||_2^2
 	bnonzeroes = falses(p)	        # indicate nonzero components of beta
 
+	# allocate GPU variables
+	y_chunks    = div(n, wg_size) + (n % wg_size != 0 ? 1 : 0)
+    y_blocks    = div(y_chunks, wg_size) + (y_chunks % wg_size != 0 ? 1 : 0)
+	r_chunks    = div(p*y_chunks, wg_size) + ((p*y_chunks) % wg_size != 0 ? 1 : 0)
+	ctx         = cl.Context(device)
+	queue       = cl.CmdQueue(ctx)
+	program     = cl.Program(ctx, source=kernfile) |> cl.build!
+	xtyk        = cl.Kernel(program, "compute_xt_times_vector")
+	rxtyk       = cl.Kernel(program, "reduce_xt_vec_chunks")
+	reset_x     = cl.Kernel(program, "reset_x")
+	wg_size32   = convert(Int32, wg_size)
+	n32         = convert(Int32, n)
+	p32         = convert(Int32, p)
+	y_chunks32  = convert(Int32, y_chunks)
+	y_blocks32  = convert(Int32, y_blocks)
+	blocksize32 = convert(Int32, x.blocksize)
+	r_length32  = convert(Int32, p*y_chunks)
+	x_buff      = cl.Buffer(Int8,    ctx, (:r,  :copy), hostbuf = sdata(x.x))
+	m_buff      = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(means))
+	p_buff      = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(invstds))
+	y_buff      = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(res))
+	df_buff     = cl.Buffer(Float64, ctx, (:rw, :copy), hostbuf = sdata(df))
+	red_buff    = cl.Buffer(Float64, ctx, (:rw),        p * y_chunks)
+	mask_buff   = cl.Buffer(Int,     ctx, (:rw, :copy), hostbuf = sdata(train_idx))
+	genofloat   = cl.LocalMem(Float64, wg_size)
+
+
 	# loop over each element of path
-	for i = 1:path_length
+	@inbounds for i = 1:path_length
 
 		# compute the regularization path on the training set
-		bout = exchange_leastsq!(b, x_train, y_train, perm, i, inner=inner, max_iter=max_iter, quiet=quiet, n=n, p=p, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window = min(window, i), nrmsq=nrmsq) 
+		exchange_leastsq!(b, x_train, y_train, perm, i, inner=inner, max_iter=max_iter, quiet=quiet, n=n, p=p, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window = min(window, i), nrmsq=nrmsq, device=device, wg_size=wg_size, tol=tol, mask_n=train_idx, y_chunks=y_chunks, y_blocks=y_blocks, r_chunks=r_chunks, device=device, ctx=ctx, queue=queue, x_buff=x_buff, y_buff=y_buff, m_buff=m_buff, p_buff=p_buff, df_buff=df_buff, red_buff=red_buff, genofloat=genofloat, program=program, xtyk=xtyk, rxtyk=rxtyk, reset_x=reset_x, wg_size32=wg_size32, n32=n32, p32=p32, y_chunks32=y_chunks32, y_blocks32=y_blocks32, blocksize32=blocksize32, r_length32=r_length32, mask_n=train_idx, mask_buff=mask_buff, pids=pids) 
 
-		# find the support of bout
-		update_indices!(bnonzeroes, bout, p=p)
+		# indices stores Boolean indexes of nonzeroes in b
+		update_indices!(indices, b, p=p)
 
-		# subset training indices of x with support
-		x_refit    = x_train[:,bnonzeroes]
+		# recompute estimated response 
+		xb!(tempn,x,b,indices,i,test_idx, means=means, invstds=invstds, pids=pids)
 
-		# perform ordinary least squares to refit support of bout
-		Xty        = BLAS.gemv('T', 1.0f0, x_refit, y_train)
-		XtX        = BLAS.gemm('T', 'N', 1.0f0, x_refit, x_refit)
-		b_refit    = XtX \ Xty 
+		# recompute residuals
+		difference!(r,y,Xb)
 
-		# put refitted values back in bout
-		bout[bnonzeroes] = b_refit
+		# mask data from training set
+#		res[folds .!= fold] = zero(Float64) 
+		mask!(res, test_idx, 0, zero(Float32), n=n) 
 
-		# copy bout back to b 
-		copy!(b, bout)
-
-		# store b
-		update_col!(betas, b, i, n=p, p=path_length, a=1.0f0) 
+		# compute out-of-sample error as squared residual averaged over size of test set
+		myerrors[i] = sumabs2(r) / test_size
 	end
-
-	# sparsify the betas
-	betas = sparse(betas)
-
-	# compute the mean out-of-sample error for the TEST set 
-	myerrors  = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
 
 	return myerrors
 end
+
+
+
+function pfold(
+	xfile      :: ASCIIString, 
+	xtfile     :: ASCIIString, 
+	x2file     :: ASCIIString, 
+	yfile      :: ASCIIString, 
+	meanfile   :: ASCIIString, 
+	invstdfile :: ASCIIString, 
+	norm2file  :: ASCIIString,
+	pathlength :: DenseVector{Int}, 
+	kernfile   :: ASCIIString, 
+	folds      :: DenseVector{Int},
+	numfolds   :: Int;
+	devindices :: DenseVector{Int} = ones(Int,numfolds), 
+	pids       :: DenseVector{Int} = procs(),
+	tol        :: Float32 = 1f-4
+	max_iter   :: Int     = 100, 
+	max_step   :: Int     = 50, 
+	quiet      :: Bool    = true, 
+	header     :: Bool    = false
+)
+
+	# how many CPU processes can pfold use?
+	np = length(pids)
+
+	# report on CPU processes
+	quiet || println("pfold: np = ", np)
+	quiet || println("pids = ", pids)
+
+	# set up function to share state (indices of folds) 
+	i = 1
+	nextidx() = (idx=i; i+=1; idx)
+
+	# preallocate cell array for results
+	results = cell(numfolds)
+
+	# master process will distribute tasks to workers
+	# master synchronizes results at end before returning
+	@sync begin
+
+		# loop over all workers
+		for worker in pids 
+
+			# exclude process that launched pfold, unless only one process is available
+			if worker != myid() || np == 1
+
+				# asynchronously distribute tasks
+				@async begin
+					while true	
+
+						# grab next fold
+						current_fold = nextidx() 
+
+						# if current fold exceeds total number of folds then exit loop
+						current_fold > numfolds && break
+
+						# grab index of GPU device
+						devidx = devindices[current_fold]
+
+						# report distribution of fold to worker and device
+						quiet || print_with_color(:blue, "Computing fold $current_fold on worker $worker and device $devidx.\n\n")
+						
+						# launch job on worker 
+						# worker loads data from file paths and then computes the errors in one fold
+						results[current_fold] = remotecall_fetch(worker) do 
+								pids    = [worker]
+								x       = BEDFile(Float64, xfile, xtfile, x2file, pids=pids, header=header)
+								n       = x.n
+								p       = size(x,2)
+								y       = SharedArray(abspath(yfile), Float64, (n,), pids=pids)
+								means   = SharedArray(abspath(meanfile), Float64, (p,), pids=pids)
+								invstds = SharedArray(abspath(invstdfile), Float64, (p,), pids=pids)
+								nrmsq   = SharedArray(abspath(norm2file), Float64, (p,), pids=pids)
+
+								one_fold(x, y, pathlength, kernfile, folds, current_fold, max_iter=max_iter, max_step=max_step, quiet=quiet, means=means, invstds=invstds, devidx=devidx, pids=pids, nrmsq=nrmsq, n=n, p=p, header=header, window=window, tol=tol, wg_size=wg_size)
+						end # end remotecall_fetch()
+					end # end while
+				end # end @async
+			end # end if
+		end # end for
+	end # end @sync
+
+	# return reduction (row-wise sum) over results
+	return reduce(+, results[1], results) 
+end
+
 
 
 # PARALLEL CROSSVALIDATION ROUTINE FOR EXCHANGE ALGORITHM USING PLINK FILES 
@@ -424,7 +547,7 @@ end
 # -- n is the number of samples. Defaults to length(y).
 # -- p is the number of predictors. Defaults to size(x,2).
 # -- folds is the partition of the data. Defaults to a random partition into "nfolds" disjoint sets.
-# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1e-4.
+# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1f-4.
 # -- max_iter caps the number of permissible iterations in the IHT algorithm. Defaults to 1000.
 # -- quiet is a Boolean to activate output. Defaults to true (no output).
 #    NOTA BENE: each processor outputs feed to the console without regard to the others,
@@ -435,51 +558,79 @@ end
 # coded by Kevin L. Keys (2015)
 # klkeys@g.ucla.edu 
 function cv_exlstsq(
-	x             :: BEDFile,
-	y             :: DenseVector{Float32}, 
-	path_length   :: Int, 
+#	x             :: BEDFile,
+#	y             :: DenseVector{Float32}, 
+#	path_length   :: Int, 
+#	numfolds      :: Int; 
+#	nrmsq         :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
+#	means         :: DenseVector{Float32} = mean(Float32, x),
+#	invstds       :: DenseVector{Float32} = invstd(x, y=means),
+#	folds         :: DenseVector{Int}     = cv_get_folds(y,numfolds), 
+#	tol           :: Float32 = 1f-4, 
+#	n             :: Int     = length(y),
+#	p             :: Int     = size(x,2), 
+#	max_iter      :: Int     = 1000, 
+#	window        :: Int     = 20,
+#	compute_model :: Bool    = false,
+#	quiet         :: Bool    = true
+	xfile         :: ASCIIString,
+	xtfile        :: ASCIIString,
+	x2file        :: ASCIIString,
+	yfile         :: ASCIIString,
+	meanfile      :: ASCIIString,
+	invstdfile    :: ASCIIString,
+	norm2file     :: ASCIIString,
+	path          :: DenseVector{Int}, 
+	kernfile      :: ASCIIString,
+	folds         :: DenseVector{Int},
 	numfolds      :: Int; 
-	nrmsq         :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
-	means         :: DenseVector{Float32} = mean(Float32, x),
-	invstds       :: DenseVector{Float32} = invstd(x, y=means),
-	folds         :: DenseVector{Int}     = cv_get_folds(y,numfolds), 
-	tol           :: Float32 = 1f-4, 
-	n             :: Int     = length(y),
-	p             :: Int     = size(x,2), 
-	max_iter      :: Int     = 1000, 
-	window        :: Int     = 20,
-	compute_model :: Bool    = false,
-	quiet         :: Bool    = true
+	pids          :: DenseVector{Int} = procs(),
+	tol           :: Float32          = 1f-4, 
+	max_iter      :: Int              = 100, 
+	max_step      :: Int              = 50, 
+	wg_size       :: Int              = 512,
+	quiet         :: Bool             = true, 
+	compute_model :: Bool             = false,
+	header        :: Bool             = false
 ) 
 
 
 	0 <= path_length <= p || throw(ArgumentError("Path length must be positive and cannot exceed number of predictors"))
 
-	# preallocate vectors used in xval	
-	mses    = zeros(Float32, path_length)	# vector to save mean squared errors
-	my_refs = cell(numfolds)		# cell array to store RemoteRefs
+	# how many elements are in the path?
+	num_models = length(path)
+
+	# how many GPU devices are available to us?
+	devs = cl.devices(:gpu)
+	ndev = length(devs)
+
+	# how many folds can we fit on a GPU at once?
+	# count one less per GPU device, just in case
+#	max_folds = zeros(Int, ndev)
+#	for i = 1:ndev
+#		max_folds[i] = max(compute_max_gpu_load(x, wg_size, devs[i], prec64 = true) - 1, 0) 
+#	end
+
+	# how many rounds of folds do we need to schedule?
+#	fold_rounds = zeros(Int, ndev)
+#	for i = 1:ndev
+#		fold_rounds[i] = div(numfolds, max_folds[i]) + (numfolds % max_folds[i] != 0 ? 1 : 0)
+#	end
+
+	# assign index of a GPU device for each fold	
+	# default is first GPU device (devidx = 1)
+	devindices = ones(Int, numfolds)
+#	for i = 1:numfolds
+#		devindices[i] += i % ndev
+#	end
 
 	# want to compute a path for each fold
 	# the folds are computed asynchronously
-	# the @sync macro ensures that we wait for all of them to finish before proceeding 
-	@sync for i = 1:numfolds
-
-		# one_fold returns a vector of out-of-sample errors (MSE for linear regression, MCE for logistic regression) 
-		# @spawn(one_fold(...)) returns a RemoteRef to the result
-		# store that RemoteRef so that we can query the result later 
-		my_refs[i] = @spawn(one_fold(x, y, path_length, folds, i, max_iter=max_iter, quiet=quiet, window=window, n=n, p=p, nrmsq=nrmsq, means=means, invstds=invstds)) 
-	end
-	
-	# recover MSEs on each worker
-	for i = 1:numfolds
-		mses += fetch(my_refs[i])
-	end
+	# only use the worker processes
+	mses = pfold(xfile, xtfile, x2file, yfile, meanfile, invstdfile, path, kernfile, folds, numfolds,	max_iter=max_iter, max_step=max_step, quiet=quiet, devindices=devindices, pids=pids, header=header)
 
 	# average mses
 	mses ./= numfolds
-
-	# store a vector for path
-	path = collect(1:path_length)
 
 	# what is the best model size?
 	k = convert(Int, floor(mean(path[mses .== minimum(mses)])))
@@ -498,24 +649,24 @@ function cv_exlstsq(
 	if compute_model
 		
 		# initialize beta vector
-		bp = zeros(Float32, p)
-		perm = collect(1:p)
-		x_inferred = zeros(Float32, n, k)
+		bp   = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)
+		perm = SharedArray(Float32, p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
+		x_inferred = zeros(Float32, n, k) 
 
 		# first use exchange algorithm to extract model
-		bp = exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
+		exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
 
 		# which components of beta are nonzero?
 		# cannot use binary indices here since we need to return Int indices
-		inferred_model = find( function f(x) x.!= 0.0f0; end, bp)
+		inferred_model = perm[1:k] 
 
 		# allocate the submatrix of x corresponding to the inferred model
-		decompress_genotypes!(x_inferred, x, inferred_model, means=means, invstds=invstds)
+		decompress_genotypes!(x_inferred, x, inferred_model, means=means, invstds=invstds, pids=pids)
 
 		# now estimate b with the ordinary least squares estimator b = inv(x'x)x'y 
 		# return it with the vector of MSEs
-		Xty = BLAS.gemv('T', 1.0f0, x_inferred, y)	
-		XtX = BLAS.gemm('T', 'N', 1.0f0, x_inferred, x_inferred)
+		Xty = BLAS.gemv('T', one(Float32), x_inferred, y)	
+		XtX = BLAS.gemm('T', 'N', one(Float32), x_inferred, x_inferred)
 		b   = XtX \ Xty
 		return mses, b, inferred_model
 	end
