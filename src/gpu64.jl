@@ -1,29 +1,42 @@
+"An alias for the `OpenCL` module name"
+cl = OpenCL
+
+
+"""
+    exchange_leastsq!(b, x::BEDFile, y, perm, r, kernfile)
+
+If supplied a `BEDFile` `x` and an OpenCL kernel file `kernfile` as an ASCIIString, then `exchange_leastsq!()` will attempt to accelerate the calculation of the dense gradient `x' * (y - x*b)` with a GPU device. This variant introduces a host of extra arguments for the GPU. Most of these arguments are only meant to facilitate the calculation of a regularization path. The optional arguments that a user will most likely wish to manipulate are:
+
+- `device`, an `OpenCL.Device` object indicating the device to use in computations. Defaults to `last(OpenCL.devices(:gpu))`.
+- `mask_n`, an `Int` vector of `0`s and `1`s indexing the rows of `x` and `y` that should be included or masked in the analysis. Defaults to `ones(Int,n)`, which includes all data.
+- `wg_size` is the desired workgroup size for the GPU. Defaults to `512`.
+"""
 function exchange_leastsq!(
-    b        :: DenseVector{Float32}, 
+    b        :: DenseVector{Float64}, 
     x           :: BEDFile, 
-    y           :: DenseVector{Float32}, 
+    y           :: DenseVector{Float64}, 
     perm        :: DenseVector{Int}, 
     r           :: Int,
     kernfile    :: ASCIIString; 
-    inner       :: Dict{Int,DenseVector{Float32}} = Dict{Int,DenseVector{Float32}}(), 
+    inner       :: Dict{Int,DenseVector{Float64}} = Dict{Int,DenseVector{Float64}}(), 
     pids        :: DenseVector{Int}     = procs(),
-    means       :: DenseVector{Float32} = mean(Float32,x, shared=true, pids=pids), 
-    invstds     :: DenseVector{Float32} = invstd(x, means, shared=true, pids=pids),
+    means       :: DenseVector{Float64} = mean(Float64,x, shared=true, pids=pids), 
+    invstds     :: DenseVector{Float64} = invstd(x, means, shared=true, pids=pids),
     n           :: Int                  = length(y), 
     p           :: Int                  = size(x,2), 
-    df          :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
-    dotprods    :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
-    tempp       :: DenseVector{Float32} = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
-    Xb          :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
-    res         :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
-    tempn       :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
-    tempn2      :: DenseVector{Float32} = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32), pids=pids), 
+    df          :: DenseVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids), 
+    dotprods    :: DenseVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids), 
+    tempp       :: DenseVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids), 
+    Xb          :: DenseVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids), 
+    res         :: DenseVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids), 
+    tempn       :: DenseVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids), 
+    tempn2      :: DenseVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids), 
     mask_n      :: DenseVector{Int}     = ones(Int,n),
     indices     :: BitArray{1}          = falses(p), 
     window      :: Int                  = r, 
     max_iter    :: Int                  = 100, 
-    tol         :: Float32              = 1e-4, 
-    n64         :: Float32              = convert(Float32, n), 
+    tol         :: Float64              = 1e-4, 
+    n64         :: Float64              = convert(Float64, n), 
     quiet       :: Bool                 = false,
     wg_size     :: Int                  = 512,
     y_chunks    :: Int                  = div(n, wg_size) + (n % wg_size != 0 ? 1 : 0),
@@ -33,14 +46,14 @@ function exchange_leastsq!(
     ctx         :: cl.Context           = cl.Context(device), 
     queue       :: cl.CmdQueue          = cl.CmdQueue(ctx),
     x_buff      :: cl.Buffer            = cl.Buffer(Int8,    ctx, (:r,  :copy), hostbuf = sdata(x.x)),
-    y_buff      :: cl.Buffer            = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(res)),
-    m_buff      :: cl.Buffer            = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(means)),
-    p_buff      :: cl.Buffer            = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(invstds)),
-    df_buff     :: cl.Buffer            = cl.Buffer(Float32, ctx, (:rw, :copy), hostbuf = sdata(df)),
-    red_buff    :: cl.Buffer            = cl.Buffer(Float32, ctx, (:rw), p * y_chunks),
-    xty_buff    :: cl.Buffer            = cl.Buffer(Float32, ctx, (:rw), p),
+    y_buff      :: cl.Buffer            = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(res)),
+    m_buff      :: cl.Buffer            = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(means)),
+    p_buff      :: cl.Buffer            = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(invstds)),
+    df_buff     :: cl.Buffer            = cl.Buffer(Float64, ctx, (:rw, :copy), hostbuf = sdata(df)),
+    red_buff    :: cl.Buffer            = cl.Buffer(Float64, ctx, (:rw), p * y_chunks),
+    xty_buff    :: cl.Buffer            = cl.Buffer(Float64, ctx, (:rw), p),
     mask_buff   :: cl.Buffer            = cl.Buffer(Int,     ctx, (:r,  :copy), hostbuf = sdata(mask_n)),
-    genofloat   :: cl.LocalMem          = cl.LocalMem(Float32, wg_size),
+    genofloat   :: cl.LocalMem          = cl.LocalMem(Float64, wg_size),
     program     :: cl.Program           = cl.Program(ctx, source=kernfile) |> cl.build!,
     xtyk        :: cl.Kernel            = cl.Kernel(program, "compute_xt_times_vector"),
     rxtyk       :: cl.Kernel            = cl.Kernel(program, "reduce_xt_vec_chunks"),
@@ -64,7 +77,7 @@ function exchange_leastsq!(
     p == length(dotprods) || throw(DimensionMismatch("length(b) != length(dotprods)"))
     p == length(perm)     || throw(DimensionMismatch("length(b) != length(perm)"))
     0 <= r <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(b)"))
-    tol >= eps(Float32)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
+    tol >= eps(Float64)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
     max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
     0 <= window <= r      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
 
@@ -76,12 +89,12 @@ function exchange_leastsq!(
     l       = 0                          # used for indexing
     m       = 0                          # used for indexing
     idx     = 0                          # used for indexing
-    a       = zero(Float32)
-    adb     = zero(Float32)              # = a / b
-    c       = zero(Float32)
-    betal   = zero(Float32)              # store lth component of b 
-    rss     = zero(Float32)              # residual sum of squares || Y - XB ||^2
-    old_rss = oftype(zero(Float32), Inf) # previous residual sum of squares 
+    a       = zero(Float64)
+    adb     = zero(Float64)              # = a / b
+    c       = zero(Float64)
+    betal   = zero(Float64)              # store lth component of b 
+    rss     = zero(Float64)              # residual sum of squares || Y - XB ||^2
+    old_rss = oftype(zero(Float64), Inf) # previous residual sum of squares 
 
     # obtain top r components of b in magnitude
     selectperm!(perm, sdata(b), r, by=abs, rev=true, initialized=true)
@@ -92,10 +105,10 @@ function exchange_leastsq!(
 
     # update residuals based on Xb 
     difference!(res, y, Xb, n=n)
-    mask!(res, mask_n, 0, zero(Float32), n=n)
+    mask!(res, mask_n, 0, zero(Float64), n=n)
 
     # save value of RSS before starting algorithm
-    rss = 0.5f0*sumabs2(res)
+    rss = 0.5*sumabs2(res)
 
     # compute inner products of x and residuals 
     # this is basically the negative gradient
@@ -114,7 +127,7 @@ function exchange_leastsq!(
             l     = perm[i]
             betal = b[l]
             decompress_genotypes!(tempn, x, l, means, invstds) # tempn now holds x[:,l]
-            mask!(tempn, mask_n, 0, zero(Float32), n=n)
+            mask!(tempn, mask_n, 0, zero(Float64), n=n)
 
             # if necessary, compute inner products of current predictor against all other predictors
             # store this information in Dict inner
@@ -149,9 +162,9 @@ function exchange_leastsq!(
             # now want to update residuals with current best predictor
             m = perm[k]
             decompress_genotypes!(tempn2, x, m, means, invstds) # tempn now holds X[:,l]
-            mask!(tempn2, mask_n, 0, zero(Float32), n=n)
+            mask!(tempn2, mask_n, 0, zero(Float64), n=n)
             axpymbz!(res, betal, tempn, adb, tempn2, p=n)
-            mask!(res, mask_n, 0, zero(Float32), n=n)
+            mask!(res, mask_n, 0, zero(Float64), n=n)
 
             # if necessary, compute inner product of current predictor against all other predictors
             # save in our Dict for future reference
@@ -169,16 +182,16 @@ function exchange_leastsq!(
             perm[k] = j 
             b[m]    = adb
             if k != i
-                b[j] = zero(Float32)
+                b[j] = zero(Float64)
             end
 
         end # end middle loop over predictors 
 
         # need to mask residuals that are not in analysis
-        mask!(res, mask_n, 0, zero(Float32), n=n)
+        mask!(res, mask_n, 0, zero(Float64), n=n)
 
         # update residual sum of squares
-        rss = 0.5f0*sumabs2(res)
+        rss = 0.5*sumabs2(res)
 
         # test for numerical instability
         isnan(rss) && throw(error("Objective function is NaN!"))
@@ -204,17 +217,26 @@ function exchange_leastsq!(
 end # end exchange_leastsq
 
 
+"""
+    one_fold(x::BEDFile, y, path_length, kernfile, folds, fold)
+
+If supplied a `BEDFile` `x` and an OpenCL kernel file `kernfile` as an ASCIIString, then `one_fold` will attempt to accelerate the calculation of the dense gradient `x' * (y - x*b)` in `exchange_leastsq!()` with a GPU device. The new optional arguments include:
+
+- `devidx`, an index indicating the GPU device to use in computations. The device is chosen  as `OpenCL.devices(:gpu)[devidx]`. Defaults to `1` (choose the first GPU device)
+- `wg_size` is the desired workgroup size for the GPU. Defaults to `512`.
+- `header` is a `Bool` to feed to `readdlm` when loading the nongenetic covariates `x.x2`. Defaults to `false` (no header). 
+"""
 function one_fold(
     x           :: BEDFile, 
-    y           :: DenseVector{Float32}, 
+    y           :: DenseVector{Float64}, 
     path_length :: Int, 
     kernfile    :: ASCIIString,
     folds       :: DenseVector{Int}, 
     fold        :: Int; 
     pids        :: DenseVector{Int}     = procs(),
-    means       :: DenseVector{Float32} = mean(Float32, x, shared=true, pids=pids), 
-    invstds     :: DenseVector{Float32} = invstd(x, y=means, shared=true, pids=pids), 
-    tol         :: Float32              = 1f-6,
+    means       :: DenseVector{Float64} = mean(Float64, x, shared=true, pids=pids), 
+    invstds     :: DenseVector{Float64} = invstd(x, y=means, shared=true, pids=pids), 
+    tol         :: Float64              = 1e-6,
     max_iter    :: Int                  = 100, 
     window      :: Int                  = 20, 
     n           :: Int                  = length(y),
@@ -232,7 +254,7 @@ function one_fold(
     test_idx = folds .== fold
 
     # preallocate vector for output
-    myerrors = zeros(Float32, path_length) 
+    myerrors = zeros(Float64, path_length) 
 
     # train_idx is the vector that indexes the TRAINING set
     train_idx = !test_idx
@@ -246,22 +268,22 @@ function one_fold(
     test_idx  = convert(Vector{Int}, test_idx)
 
     # declare sparse matrix for output
-    betas   = spzeros(Float32, p, path_length)
+    betas   = spzeros(Float64, p, path_length)
 
     # declare all temporary arrays
-    b        = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)
+    b        = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)
     perm     = SharedArray(Int,     p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
-    df       = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)     # (negative) gradient 
-    tempp    = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)     # temporary array of length p
-    dotprods = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)     # hold in memory the dot products for current index
-    bout     = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)     # output array for beta
-    tempn    = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)     # temporary array of n floats 
-    tempn2   = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)     # temporary array of n floats 
-    res      = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)     # for || Y - XB ||_2^2
-    Xb       = SharedArray(Float32, n, init = S -> S[localindexes(S)] = zero(Float32),   pids=pids)
+    df       = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)     # (negative) gradient 
+    tempp    = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)     # temporary array of length p
+    dotprods = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)     # hold in memory the dot products for current index
+    bout     = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)     # output array for beta
+    tempn    = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)     # temporary array of n floats 
+    tempn2   = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)     # temporary array of n floats 
+    res      = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)     # for || Y - XB ||_2^2
+    Xb       = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64),   pids=pids)
     indices  = falses(p)
-    inner    = Dict{Int,DenseVector{Float32}}()
-    n64      = convert(Float32, n)
+    inner    = Dict{Int,DenseVector{Float64}}()
+    n64      = convert(Float64, n)
 
     # allocate GPU variables
     y_chunks    = div(n, wg_size) + (n % wg_size != 0 ? 1 : 0)
@@ -281,14 +303,14 @@ function one_fold(
     blocksize32 = convert(Int32, x.blocksize)
     r_length32  = convert(Int32, p*y_chunks)
     x_buff      = cl.Buffer(Int8,    ctx, (:r,  :copy), hostbuf = sdata(x.x))
-    m_buff      = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(means))
-    p_buff      = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(invstds))
-    y_buff      = cl.Buffer(Float32, ctx, (:r,  :copy), hostbuf = sdata(res))
-    df_buff     = cl.Buffer(Float32, ctx, (:rw, :copy), hostbuf = sdata(df))
-    red_buff    = cl.Buffer(Float32, ctx, (:rw),        p * y_chunks)
+    m_buff      = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(means))
+    p_buff      = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(invstds))
+    y_buff      = cl.Buffer(Float64, ctx, (:r,  :copy), hostbuf = sdata(res))
+    df_buff     = cl.Buffer(Float64, ctx, (:rw, :copy), hostbuf = sdata(df))
+    red_buff    = cl.Buffer(Float64, ctx, (:rw),        p * y_chunks)
     mask_buff   = cl.Buffer(Int,     ctx, (:rw, :copy), hostbuf = sdata(train_idx))
-    xty_buff    = cl.Buffer(Float32, ctx, (:rw), p)
-    genofloat   = cl.LocalMem(Float32, wg_size)
+    xty_buff    = cl.Buffer(Float64, ctx, (:rw), p)
+    genofloat   = cl.LocalMem(Float64, wg_size)
 
 
     # loop over each element of path
@@ -306,10 +328,10 @@ function one_fold(
         difference!(res,y,Xb)
 
         # mask data from training set
-        mask!(res, test_idx, 0, zero(Float32), n=n) 
+        mask!(res, test_idx, 0, zero(Float64), n=n) 
 
         # compute out-of-sample error as squared residual averaged over size of test set
-        myerrors[i] = 0.5f0*sumabs2(res) / test_size
+        myerrors[i] = 0.5*sumabs2(res) / test_size
     end
 
     return myerrors
@@ -317,6 +339,14 @@ end
 
 
 
+"""
+    pfold(xfile, xtfile, x2file,yfile, meanfile, invstdfile,pathlength,kernfile,folds,numfolds[, pids=procs(), devindices=ones(Int,numfolds])
+
+This function is the parallel execution kernel in `cv_iht()`. It is not meant to be called outside of `cv_iht()`.
+It will distribute `numfolds` crossvalidation folds across the processes supplied by the optional argument `pids` and call `one_fold()` for each fold.
+Each fold will use the GPU device indexed by its corresponding component of the optional argument `devindices` to compute a regularization path of length `pathlength`.
+`pfold()` collects the vectors of MSEs returned by calling `one_fold()` for each process, reduces them, and returns their average across all folds.
+"""
 function pfold(
     xfile      :: ASCIIString, 
     xtfile     :: ASCIIString, 
@@ -330,7 +360,7 @@ function pfold(
     numfolds   :: Int;
     devindices :: DenseVector{Int} = ones(Int,numfolds), 
     pids       :: DenseVector{Int} = procs(),
-    tol        :: Float32 = 1e-4,
+    tol        :: Float64 = 1e-4,
     max_iter   :: Int     = 100, 
     window     :: Int     = 20,
     wg_size    :: Int     = 512,
@@ -382,12 +412,12 @@ function pfold(
                         # worker loads data from file paths and then computes the errors in one fold
                         results[current_fold] = remotecall_fetch(worker) do 
                                 pids    = [worker]
-                                x       = BEDFile(Float32, xfile, xtfile, x2file, pids=pids, header=header)
+                                x       = BEDFile(Float64, xfile, xtfile, x2file, pids=pids, header=header)
                                 n       = x.n
                                 p       = size(x,2)
-                                y       = SharedArray(abspath(yfile), Float32, (n,), pids=pids)
-                                means   = SharedArray(abspath(meanfile), Float32, (p,), pids=pids)
-                                invstds = SharedArray(abspath(invstdfile), Float32, (p,), pids=pids)
+                                y       = SharedArray(abspath(yfile), Float64, (n,), pids=pids)
+                                means   = SharedArray(abspath(meanfile), Float64, (p,), pids=pids)
+                                invstds = SharedArray(abspath(invstdfile), Float64, (p,), pids=pids)
 
                                 one_fold(x, y, pathlength, kernfile, folds, current_fold, max_iter=max_iter, quiet=quiet, means=means, invstds=invstds, devidx=devidx, pids=pids, n=n, p=p, header=header, window=window, tol=tol, wg_size=wg_size)
                         end # end remotecall_fetch()
@@ -403,16 +433,25 @@ end
 
 
 
+"""
+    cv_iht(xfile,xtfile,x2file,yfile,meanfile,invstdfile,path,kernfile,folds,numfolds [, pids=procs(), wg_size=512])
+
+This variant of `cv_iht()` performs `numfolds` crossvalidation with a `BEDFile` object loaded by `xfile`, `xtfile`, and `x2file`,
+with column means stored in `meanfile` and column precisions stored in `invstdfile`.
+The continuous response is stored in `yfile` with data particioned by the `Int` vector `folds`.
+The calculations employ GPU acceleration by calling OpenCL kernels from `kernfile` with workgroup size `wg_size`.
+The folds are distributed across the processes given by `pids`.
+"""
 function cv_exlstsq(
 #   x             :: BEDFile,
-#   y             :: DenseVector{Float32}, 
+#   y             :: DenseVector{Float64}, 
 #   path_length   :: Int, 
 #   numfolds      :: Int; 
-#   nrmsq         :: DenseVector{Float32} = sumsq(x, shared=false, means=means, invstds=invstds), 
-#   means         :: DenseVector{Float32} = mean(Float32, x),
-#   invstds       :: DenseVector{Float32} = invstd(x, y=means),
+#   nrmsq         :: DenseVector{Float64} = sumsq(x, shared=false, means=means, invstds=invstds), 
+#   means         :: DenseVector{Float64} = mean(Float64, x),
+#   invstds       :: DenseVector{Float64} = invstd(x, y=means),
 #   folds         :: DenseVector{Int}     = cv_get_folds(y,numfolds), 
-#   tol           :: Float32 = 1e-4, 
+#   tol           :: Float64 = 1e-4, 
 #   n             :: Int     = length(y),
 #   p             :: Int     = size(x,2), 
 #   max_iter      :: Int     = 1000, 
@@ -432,7 +471,7 @@ function cv_exlstsq(
     folds         :: DenseVector{Int},
     numfolds      :: Int; 
     pids          :: DenseVector{Int} = procs(),
-    tol           :: Float32          = 1e-4, 
+    tol           :: Float64          = 1e-4, 
     max_iter      :: Int              = 100, 
     wg_size       :: Int              = 512,
     quiet         :: Bool             = true, 
@@ -489,9 +528,9 @@ function cv_exlstsq(
     if compute_model
         
         # initialize beta vector
-        bp   = SharedArray(Float32, p, init = S -> S[localindexes(S)] = zero(Float32), pids=pids)
-        perm = SharedArray(Float32, p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
-        x_inferred = zeros(Float32, n, k) 
+        bp   = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids)
+        perm = SharedArray(Float64, p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
+        x_inferred = zeros(Float64, n, k) 
 
         # first use exchange algorithm to extract model
         exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
@@ -505,8 +544,8 @@ function cv_exlstsq(
 
         # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y 
         # return it with the vector of MSEs
-        Xty = BLAS.gemv('T', one(Float32), x_inferred, y)   
-        XtX = BLAS.gemm('T', 'N', one(Float32), x_inferred, x_inferred)
+        Xty = BLAS.gemv('T', one(Float64), x_inferred, y)   
+        XtX = BLAS.gemm('T', 'N', one(Float64), x_inferred, x_inferred)
         b   = XtX \ Xty
         return mses, b, inferred_model
     end

@@ -12,8 +12,8 @@ end
 """
     axpymbz!(y,a,x,b,z[, p=length(y)])
 
-The silly name is based on BLAS `axpy()` (A*X Plus Y), except that this function performs A*X Plus Y Minus B*Z.
-The idea behind axpymz!() is to perform the computation in one pass over the arrays. The output is the same as `@devec y = y + a*x - b*z`.
+The silly name is based on BLAS `axpy()` (A*X Plus Y), except that this function performs *A**X* *P*lus *Y* *M*inus *B**Z*.
+The idea behind `axpymz!()` is to perform the computation in one pass over the arrays. The output is the same as `y = y + a*x - b*z`.
 """
 function axpymbz!(
     y :: Vector{Float64},
@@ -27,13 +27,6 @@ function axpymbz!(
         y[i] = axpymbz!(i, y, a, x, b, z)
     end
 end
-
-
-#function axpymbz!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}; p::Int = length(y))
-#   @sync @inbounds @parallel for i = 1:p
-#       y[i] = y[i] + a*x[i] - b*z[i]
-#   end
-#end
 
 
 function myrange(q::SharedVector{Float64})
@@ -86,9 +79,9 @@ This function minimizes the residual sum of squares
 
     0.5*sumabs2( y - x*bvec )
 
-subject to `bvec` having no more than `r`r nonzero components. The function will compute a `bvec` for a given value of `r`.
+subject to `bvec` having no more than `r` nonzero components. The function will compute a `bvec` for a given value of `r`.
 For optimal accuracy, this function should be run for multiple values of `r` over a path.
-For optimal performance for regularization path computations, reuse the arguments `bvec`, `perm`, and `inner`.
+For optimal performance over regularization path computations, use warmstarts for the arguments `bvec`, `perm`, and `inner`.
 
 Arguments:
 
@@ -99,9 +92,9 @@ Arguments:
 - `r` is the desired number of nonzero components in `bvec`.
 
 Optional Arguments:
-- `inner` is a `Dict` for storing inner products dynamically as needed instead of computing `x' * x`. Defaults to `Dict{Int64,Vector{Float64}}`.
+- `inner` is a `Dict` for storing Hessian inner products dynamically as needed instead of precomputing all of `x' * x`. Defaults to an empty `Dict{Int,DenseVector{Float}}()`.
 - `n` and `p` are the dimensions of `x`; the former defaults to `length(y)` while the latter defaults to `size(x,2)`.
-- `nrmsq` is the vector to store the squared norms of the columns of X. Defaults to vec(sumabs2(X,1))
+- `nrmsq` is the vector to store the squared norms of the columns of `x`. Defaults to `vec(sumabs2(x,1))`.
 - `df` is the temporary array to store the gradient. Defaults to `zeros(p)`.
 - `dotprods` is the temporary array to store the current column of dot products from `inner`. Defaults to `zeros(p)`.
 - `tempp` is a temporary array of length `p`. Defaults to `zeros(p)`.
@@ -111,9 +104,9 @@ Optional Arguments:
 - `window` is an `Int` to dictate the dimension of the search window for potentially exchanging predictors.
    Defaults to `r` (potentially exchange all current predictors). Decreasing this quantity tells the algorithm to search through
    fewer current active predictors, which can decrease compute time but can also degrade model recovery performance.
-- `max_iter` is the maximum permissible number of iterations. Defaults to `1000`.
+- `max_iter` is the maximum permissible number of iterations. Defaults to `100`.
 - `tol` is the convergence tolerance. Defaults to `1e-6`.
-- `quiet` is a boolean to control output. Defaults to `false` (full output).
+- `quiet` is a `Bool` to control output. Defaults to `false` (full output).
 """
 function exchange_leastsq!(
     bvec     :: DenseVector{Float64},
@@ -132,7 +125,7 @@ function exchange_leastsq!(
     tempn    :: DenseVector{Float64} = zeros(Float64, n),
     tempn2   :: DenseVector{Float64} = zeros(Float64, n),
     window   :: Int     = r,
-    max_iter :: Int     = one(Float64),
+    max_iter :: Int     = 100,
     tol      :: Float64 = 1e-6,
     quiet    :: Bool    = false
 )
@@ -154,13 +147,13 @@ function exchange_leastsq!(
 
 
     # declare algorithm variables
-    i    = 0                            # used for iterations
-    iter = 0                            # used for outermost loop
-    j    = 0                            # used for iterations
-    k    = 0                            # used for indexing
-    l    = 0                            # used for indexing
-    m    = 0                            # used for indexing
-    idx  = 0                            # used for indexing
+    i       = 0                         # used for iterations
+    iter    = 0                         # used for outermost loop
+    j       = 0                         # used for iterations
+    k       = 0                         # used for indexing
+    l       = 0                         # used for indexing
+    m       = 0                         # used for indexing
+    idx     = 0                         # used for indexing
     a       = zero(Float64)
     b       = zero(Float64)
     adb     = zero(Float64)             # = a / b
@@ -171,13 +164,14 @@ function exchange_leastsq!(
     old_rss = oftype(zero(Float64),Inf) # previous residual sum of squares
 
     # obtain top r components of bvec in magnitude
-    selectpermk!(perm,bvec, r, p=p)
+#    selectpermk!(perm,bvec, r, p=p)
+    selectperm!(perm, bvec, r, by=abs, rev=true, initialized=true)
 
     # compute partial residuals based on top r components of perm vector
     RegressionTools.update_partial_residuals!(res, y, x, perm, bvec, r, n=n, p=p)
 
     # save value of RSS before starting algorithm
-    rss = sumabs2(res)
+    rss = 0.5*sumabs2(res)
 
     # compute inner products of X and residuals
     # this is basically the negative gradient
@@ -202,7 +196,6 @@ function exchange_leastsq!(
             # for current index, hold dot products in memory for duration of inner loop
             # the if/else statement below is the same as but faster than
             # > dotprods = get!(inner, l, BLAS.gemv('T', one(Float64), X, tempn))
-
             if !haskey(inner, l)
                 inner[l] = BLAS.gemv('T', one(Float64), x, tempn)
             end
@@ -259,7 +252,7 @@ function exchange_leastsq!(
         end # end middle loop over predictors
 
         # update residual sum of squares
-        rss = sumabs2(res)
+        rss = 0.5*sumabs2(res)
 
         # test for descent failure
         # if no descent failure, then test for convergence

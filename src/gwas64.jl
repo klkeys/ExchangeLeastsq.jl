@@ -1,446 +1,371 @@
-# EXCHANGE ALGORITHM FOR L0-PENALIZED LEAST SQUARES REGRESSION OVER ENTIRE GWAS 
-# 
-# This function minimizes the residual sum of squares
-# 
-# RSS = 0.5*|| Y - Xbeta ||_2^2
-#
-# subject to beta having no more than r nonzero components. The function will compute a B for a given value of r.
-# For optimal accuracy and performance, this function should be run for multiple values of r over a path.
-# In doing so, one should reuse the arguments beta, perm, and inner.
-#
-# This function is designed to operate on compressed genotypes in PLINK BED format. It requires the
-# PLINK module to handle the decompression and linear algebra routines. Due to the compression,
-# it is IMPERATIVE that the user supply the correct number of SNPs p. Also, this function will *NOT*
-# work with missing data; if genotype calls are missing, then the user *MUST* impute them before using this algorithm. 
-#
-# Arguments:
-# -- bvec is the p-dimensional warm-start for the iterate.
-# -- X a BEDFile object that stores the compressed n x p statistical design matrix as an array of Int8 numbers.
-# -- Y is the n-dimensional response vector.
-# -- perm is a p-dimensional array of integers that sort beta in descending order by magnitude.
-# -- r is the desired number of nonzero components in beta.
-# -- p is the number of predictors in the model.
-# 
-# Optional Arguments:
-# -- nrmsq is the vector to store the squared norms of the columns of X. Defaults to PLINK.sumsq(x) 
-# -- n is the number of cases in the Model. Defaults to length(Y). 
-# -- max_iter is the maximum permissible number of iterations. Defaults to 100.
-# -- tol is the convergence tolerance. Defaults to 1e-6.
-# -- "inner" is Dict for storing inner products. We fill inner dynamically as needed instead of computing X'X.
-#    Defaults to an empty dict with typeasserts Int64 for the keys and Array{Float64,1} for the values.
-# -- quiet is a boolean to control output. Defaults to false (full output).
-# -- res is the temporary array to store the vector of RESiduals. Defaults to zeros(n).
-# -- df is the temporary array to store the gradient. Defaults to zeros(p)
-# -- tempn is a temporary array of length n. Defaults to zeros(n).
-# -- tempn2 is another temporary array of length n. Defaults to copy(tempn).
-# -- dotprods is the temporary array to store the current column of dot products from Dict "inner". Defaults to zeros(p)
-# -- window is an Int variable to dictate the dimension of the search window for potentially exchanging predictors. 
-#    Defaults to r (potentially exchange all current predictors). Decreasing this quantity tells the algorithm to search through 
-#    fewer current active predictors, which can decrease compute time but can also degrade model recovery performance. 
-#
-# coded by Kevin L. Keys (2015)
-# klkeys@g.ucla.edu
+"""
+    exchange_leastsq!(b, x::BEDFile, y, perm, r) -> b
+
+If called with a `BEDFile` object `x`, then `exchange_leastsq!()` typeasserts all arrays as `SharedArray`s. The additional optional arguments are:
+
+- `pids`, a vector of process IDs. Defaults to `procs()`.
+- `means`, a vector of SNP means. Defaults to `mean(Float64, x, shared=true, pids=procs()`.
+- `invstds`, a vector of SNP precisions. Defaults to `invstd(x, means, shared=true, pids=procs()`.
+- `Xb` is an `n`-vector storing the estimated response `x*b`.
+- `indices` is a `BitArray` that indexes the nonzeroes in `b`.
+- `mask_n` is an `Int` array that applies a bitmask to the samples. This enables efficient crossvalidation calculations by avoiding subsetting operations on the `BEDFile` `x`. 
+  `mask_n` should only contain `0`s (exclude) and `1`s (include). Defaults to a `SharedArray` of `n` ones, which includes all data.
+- `n64` is a floating point copy of problem dimension `n` used in intermediate calculations to avoid repeated `Int` conversion. Defaults to `convert(Float64,n)`.
+
+Because `BEDFile` objects require on-the-fly column standardization, the `nrmsq` argument is not used here.
+"""
 function exchange_leastsq!(
-	bvec     :: SharedVector{Float64}, 
-	X        :: BEDFile, 
-	Y        :: SharedVector{Float64}, 
-	perm     :: SharedVector{Int}, 
-	r        :: Int; 
-	inner    :: Dict{Int,SharedVector{Float64}} = Dict{Int,SharedVector{Float64}}(), 
-	means    :: SharedVector{Float64} = mean(Float64,x, shared=true), 
-	invstds  :: SharedVector{Float64} = invstd(x, means),
-	nrmsq    :: SharedVector{Float64} = sumsq(Float64, x, shared=true, means=means, invstds=invstds), 
-	n        :: Int                   = length(Y), 
-	p        :: Int                   = size(X,2), 
-	df       :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	dotprods :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempp    :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = 0.0f0), 
-	Xb       :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	res      :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn    :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	tempn2   :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = 0.0f0), 
-	indices  :: BitArray{1}           = falses(p), 
-	window   :: Int                   = r, 
-	max_iter :: Int                   = 10000, 
-	tol      :: Float64               = 1e-4, 
-	quiet    :: Bool                  = false
+    b        :: SharedVector{Float64},
+    x        :: BEDFile,
+    y        :: SharedVector{Float64},
+    perm     :: SharedVector{Int},
+    r        :: Int;
+    inner    :: Dict{Int,SharedVector{Float64}} = Dict{Int,SharedVector{Float64}}(),
+    pids     :: DenseVector{Int}      = procs(),
+    means    :: SharedVector{Float64} = mean(Float64,x, shared=true, pids=pids),
+    invstds  :: SharedVector{Float64} = invstd(x, means, pids=pids),
+    n        :: Int                   = length(y),
+    p        :: Int                   = size(x,2),
+    df       :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
+    dotprods :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
+    tempp    :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
+    Xb       :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
+    res      :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
+    tempn    :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
+    tempn2   :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
+    mask_n   :: SharedVector{Float64} = SharedArray(Int,     n, init = S -> S[localindexes(S)] = one(Int),      pids=pids),
+    indices  :: BitArray{1}           = falses(p),
+    window   :: Int                   = r,
+    max_iter :: Int                   = 100,
+    n64      :: Float64               = convert(Float64, n),
+    tol      :: Float64               = 1e-6,
+    quiet    :: Bool                  = false
 )
 
-	# error checking
-	n == length(tempn)    || throw(DimensionMismatch("length(Y) != length(tempn)"))
-	n == length(tempn2)   || throw(DimensionMismatch("length(Y) != length(tempn2)"))
-	n == length(res)      || throw(DimensionMismatch("length(Y) != length(res)"))
-	p == length(bvec)     || throw(DimensionMismatch("Number of predictors != length(bvec)"))
-	p == length(df)       || throw(DimensionMismatch("length(bvec) != length(df)"))
-	p == length(tempp)    || throw(DimensionMismatch("length(bvec) != length(tempp)"))
-	p == length(dotprods) || throw(DimensionMismatch("length(bvec) != length(dotprods)"))
-	p == length(nrmsq)    || throw(DimensionMismatch("length(bvec) != length(nrmsq)"))
-	p == length(perm)     || throw(DimensionMismatch("length(bvec) != length(perm)"))
-	0 <= r <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(bvec)"))
-	tol >= eps(Float64)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
-	max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
-	0 <= window <= r      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
+    # error checking
+    n == length(tempn)    || throw(DimensionMismatch("length(y) != length(tempn)"))
+    n == length(tempn2)   || throw(DimensionMismatch("length(y) != length(tempn2)"))
+    n == length(res)      || throw(DimensionMismatch("length(y) != length(res)"))
+    n == length(mask_n)   || throw(DimensionMismatch("length(y) != length(res)"))
+    p == length(b)        || throw(DimensionMismatch("Number of predictors != length(b)"))
+    p == length(df)       || throw(DimensionMismatch("length(b) != length(df)"))
+    p == length(tempp)    || throw(DimensionMismatch("length(b) != length(tempp)"))
+    p == length(dotprods) || throw(DimensionMismatch("length(b) != length(dotprods)"))
+    p == length(perm)     || throw(DimensionMismatch("length(b) != length(perm)"))
+    0 <= r <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(b)"))
+    tol >= eps(Float64)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
+    max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
+    0 <= window <= r      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
 
-	# declare all integers 
-	i    = 0	# used for iterations
-	iter = 0	# used for outermost loop
-	j    = 0	# used for iterations
-	k    = 0	# used for indexing
-	l    = 0	# used for indexing
-	m    = 0	# used for indexing 
-	idx  = 0	# used for indexing
+    # argument mask_n should only have 0 or 1
+    sum((mask_n .== 1) $ (mask_n .== 0)) == n || throw(ArgumentError("Argument mask_n can only contain 1s and 0s"))
 
-	# declare all floats
-	a       = 0.0
-	b       = 0.0
-	adb     = 0.0	# = a / b
-	c       = 0.0
-	d       = 0.0
-	betal   = 0.0	# store lth component of bvec 
-	rss     = Inf	# residual sum of squares || Y - XB ||^2
-	old_rss = Inf	# previous residual sum of squares 
+    # declare algorithm variables
+    i       = 0                         # used for iterations
+    iter    = 0                         # used for outermost loop
+    j       = 0                         # used for iterations
+    k       = 0                         # used for indexing
+    l       = 0                         # used for indexing
+    m       = 0                         # used for indexing
+    idx     = 0                         # used for indexing
+    a       = zero(Float64)
+    adb     = zero(Float64)             # = a / b
+    c       = zero(Float64)
+    betal   = zero(Float64)             # store lth component of b
+    rss     = zero(Float64)             # residual sum of squares || Y - XB ||^2
+    old_rss = oftype(zero(Float64),Inf) # previous residual sum of squares
 
-	# obtain top r components of bvec in magnitude
-	selectpermk!(perm,bvec, r, p=p)
-	update_indices!(indices, bvec, p=p)
+    # obtain top r components of b in magnitude
+    selectperm!(perm, sdata(b), k, by=abs, rev=true, initialized=true)
+    update_indices!(indices, b, p=p)
 
-	# update X*b
-	xb!(Xb,X,bvec,indices,r, means=means, invstds=invstds)
+    # update X*b
+    xb!(Xb,x,b,indices,r,mask_n, means=means, invstds=invstds, pids=pids)
 
-	# update residuals based on Xb 
-	difference!(res, Y, Xb, n=n)
+    # update residuals based on Xb
+    difference!(res, y, Xb, n=n)
+    mask!(res, mask_n, 0, zero(Float64), n=n)
 
-	# save value of RSS before starting algorithm
-	rss = sumabs2(res)
+    # save value of RSS before starting algorithm
+    rss = 0.5*sumabs2(res)
 
-	# compute inner products of X and residuals 
-	# this is basically the negative gradient
-	xty!(df, X, res, means=means, invstds=invstds)
-	
-	# outer loop controls number of total iterations for algorithm run on one r
-	for iter = 1:(max_iter)
+    # compute inner products of X and residuals
+    # this is basically the negative gradient
+    xty!(df, x, res, mask_n, means=means, invstds=invstds, pids=pids)
 
-		# output algorithm progress to console
-		quiet || println("\titer = ", iter, ", RSS = ", rss)
+    # outer loop controls number of total iterations for algorithm run on one r
+    for iter = 1:(max_iter)
 
-		# middle loop tests each of top r parameters (by magnitude?)
-		for i = abs(r-window+1):r
+        # output algorithm progress to console
+        quiet || println("\titer = ", iter, ", RSS = ", rss)
 
-			# save information for current value of i
-			l     = perm[i]
-			betal = bvec[l]
-			decompress_genotypes!(tempn, X, l, means, invstds) # tempn now holds X[:,l]
+        # middle loop tests each of top r parameters (by magnitude?)
+        for i = abs(r-window+1):r
 
-			# if necessary, compute inner products of current predictor against all other predictors
-			# store this information in Dict inner
-			# for current index, hold dot products in memory for duration of inner loop
-			# the if/else statement below is the same as but faster than
-			# > dotprods = get!(inner, l, BLAS.gemv('T', 1.0, X, tempn))
-			if !haskey(inner, l)
-				inner[l] = xty(X, tempn, means=means, invstds=invstds)
-			end
-			copy!(dotprods,inner[l])
+            # save information for current value of i
+            l     = perm[i]
+            betal = b[l]
+            decompress_genotypes!(tempn, x, l, means, invstds) # tempn now holds X[:,l]
+            mask!(tempn, mask_n, 0, zero(Float64), n=n)
 
-			# save values to determine best estimate for current predictor
-			b   = nrmsq[l]
-			a   = df[l] + betal*b
-			adb = a / b
-			k   = i
+            # if necessary, compute inner products of current predictor against all other predictors
+            # store this information in Dict inner
+            # for current index, hold dot products in memory for duration of inner loop
+            # the if/else statement below is the same as but faster than
+            # > dotprods = get!(inner, l, BLAS.gemv('T', 1.0, X, tempn))
+            if !haskey(inner, l)
+                inner[l] = xty(x, tempn, mask_n, means=means, invstds=invstds, pids=pids)
+            end
+            copy!(dotprods,inner[l])
 
-			# inner loop compares current predictor j against all remaining predictors j+1,...,p
-			for j = (r+1):p
-				idx = perm[j]
-				c   = df[idx] + betal*dotprods[idx]
-				d   = nrmsq[idx]
+            # save values to determine best estimate for current predictor
+            a   = df[l] + betal*n64
+            adb = a / n64
+            k   = i
 
+            # inner loop compares current predictor j against all remaining predictors j+1,...,p
+            for j = (r+1):p
+                idx = perm[j]
+                c   = df[idx] + betal*dotprods[idx]
 
-				# if current inactive predictor beats current active predictor,
-				# then save info for swapping
-				if c*c/d > a*adb + tol
-					a   = c
-					b   = d
-					k   = j
-					adb = a / b
-				end
-			end # end inner loop over remaining predictor set
-			
-			# now want to update residuals with current best predictor
-			m = perm[k]
-			decompress_genotypes!(tempn2, X, m, means, invstds) # tempn now holds X[:,l]
-#			axpymbz!(res, betal, tempn, adb, tempn2, p=n)
-			axpymbz!(res, betal, tempn, adb, tempn2)
+                # if current inactive predictor beats current active predictor,
+                # then save info for swapping
+                if c*c/n64 > a*adb + tol
+                    a   = c
+                    k   = j
+                    adb = a / n64
+                end
+            end # end inner loop over remaining predictor set
 
-			# if necessary, compute inner product of current predictor against all other predictors
-			# save in our Dict for future reference
-			if !haskey(inner, m)
-				inner[m] = xty(X, tempn2, means=means, invstds=invstds)
-			end
-			copy!(tempp, inner[m])
+            # now want to update residuals with current best predictor
+            m = perm[k]
+            decompress_genotypes!(tempn2, x, m, means, invstds) # tempn now holds X[:,l]
+            mask!(tempn2, mask_n, 0, zero(Float64), n=n)
+            axpymbz!(res, betal, tempn, adb, tempn2, p=n)
+            mask!(res, mask_n, 0, zero(Float64), n=n)
 
-			# also update df
-#			axpymbz!(df, betal, dotprods, adb, tempp, p=p)
-			axpymbz!(df, betal, dotprods, adb, tempp)
+            # if necessary, compute inner product of current predictor against all other predictors
+            # save in our Dict for future reference
+            if !haskey(inner, m)
+                inner[m] = xty(x, tempn2, mask_n, means=means, invstds=invstds, pids=pids)
+            end
+            copy!(tempp, inner[m])
 
-			# now swap best predictor with current predictor
-			j       = perm[i]
-			perm[i] = perm[k] 
-			perm[k] = j 
-			bvec[m] = adb
-			if k != i
-				bvec[j] = 0.0
-			end
+            # also update df
+            axpymbz!(df, betal, dotprods, adb, tempp, p=p)
 
-		end # end middle loop over predictors 
+            # now swap best predictor with current predictor
+            j       = perm[i]
+            perm[i] = perm[k]
+            perm[k] = j
+            b[m]    = adb
+            if k != i
+                b[j] = zero(Float64)
+            end
 
-		# update residual sum of squares
-		rss = sumabs2(res)
+        end # end middle loop over predictors
 
-		# test for numerical instability
-		isnan(rss) && throw(error("Objective function is NaN!"))
-		isinf(rss) && throw(error("Objective function is Inf!"))
+        # update residual sum of squares
+        mask!(res, mask_n, 0, zero(Float64), n=n)
+        rss = 0.5*sumabs2(res)
 
-		# test for descent failure 
-		# if no descent failure, then test for convergence
-		# if not converged, then save RSS and continue
-		ascent    = rss > old_rss + tol
-		converged = abs(old_rss - rss) / abs(old_rss + 1) < tol 
+        # test for numerical instability
+        isnan(rss) && throw(error("Objective function is NaN!"))
+        isinf(rss) && throw(error("Objective function is Inf!"))
 
-		ascent && throw(error("Descent error detected at iteration $(iter)!\nOld RSS: $(old_rss)\nRSS: $(rss)")) 
-		(converged || ascent) && return bvec
-		old_rss = rss
+        # test for descent failure
+        # if no descent failure, then test for convergence
+        # if not converged, then save RSS and continue
+        ascent    = rss > old_rss + tol
+        converged = abs(old_rss - rss) / abs(old_rss + 1) < tol
 
-	end # end outer iteration loop
+        ascent && throw(error("Descent error detected at iteration $(iter)!\nOld RSS: $(old_rss)\nRSS: $(rss)"))
+        (converged || ascent) && return b
+        old_rss = rss
 
-	# at this point, maximum iterations reached
-	# warn and return bvec
-	throw(error("Maximum iterations $(max_iter) reached! Return value may not be correct.\n"))
-	return bvec
+    end # end outer iteration loop
+
+    # at this point, maximum iterations reached
+    # warn and return b
+    warn("Maximum iterations $(max_iter) reached! Return value may not be correct.\n")
+    return b
 
 end # end exchange_leastsq
 
 
-# COMPUTE ONE FOLD IN A CROSSVALIDATION SCHEME FOR A REGULARIZATION PATH FOR WHOLE GWAS
-#
-# For a regularization path given by the vector "path", 
-# this function computes an out-of-sample error based on the indices given in the vector "test_idx". 
-# The vector test_idx indicates the portion of the data to use for testing.
-# The remaining data are used for training the model.
-#
-# This variant operates on compressed PLINK genotype matrices for GWAS analysis.
-#
-# Arguments:
-# -- x is the nxp design matrix.
-# -- y is the n-vector of responses.
-# -- path is an Int to determine how many elements of the path to compute. 
-# -- test_idx is the Int array that indicates which data to hold out for testing.
-#
-# Optional Arguments:
-# -- n is the number of samples. Defaults to length(y).
-# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1e-4.
-# -- max_iter caps the number of permissible iterations in the algorithm. Defaults to 1000.
-# -- quiet is a Boolean to activate output. Defaults to true (no output).
-#
-# coded by Kevin L. Keys (2015)
-# klkeys@g.ucla.edu 
+"""
+    one_fold(x::BEDFile, y, path_length, folds, fold) -> mses
+
+If called with a `BEDFile` object `x`, then `one_fold()` typeasserts all arrays as `SharedArray`s. The additional optional arguments are:
+
+- `pids`, a vector of process IDs. Defaults to `procs()`.
+- `means`, a vector of SNP means. Defaults to `mean(Float64, x, shared=true, pids=procs()`.
+- `invstds`, a vector of SNP precisions. Defaults to `invstd(x, means, shared=true, pids=procs()`.
+
+Because `BEDFile` objects require on-the-fly column standardization, the `nrmsq` argument is not used here.
+"""
 function one_fold(
-	x           :: BEDFile, 
-	y           :: SharedVector{Float64}, 
-	path_length :: Int, 
-	folds       :: SharedVector{Int}, 
-	fold        :: Int; 
-	means       :: SharedVector{Float64} = mean(Float64, x, shared=true), 
-	invstds     :: SharedVector{Float64} = invstd(x, y=means), 
-	nrmsq       :: SharedVector{Float64} = sumsq(x, shared=true, means=means, invstds=invstds), 
-	p           :: Int  = size(x,2), 
-	max_iter    :: Int  = 1000, 
-	window      :: Int  = 20, 
-	quiet       :: Bool = true 
+    x           :: BEDFile,
+    y           :: SharedVector{Float64},
+    path_length :: Int,
+    folds       :: SharedVector{Int},
+    fold        :: Int;
+    pids        :: DenseVector{Int}      = procs(),
+    means       :: SharedVector{Float64} = mean(Float64, x, shared=true, pids=pids),
+    invstds     :: SharedVector{Float64} = invstd(x, y=means, pids=pids),
+    tol         :: Float64 = 1e-6,
+    p           :: Int     = size(x,2),
+    max_iter    :: Int     = 100,
+    window      :: Int     = 20,
+    quiet       :: Bool    = true
 )
 
-	# find testing indices
-	test_idx = folds .== fold
+    # find testing indices
+    test_idx = folds .== fold
 
-	# preallocate vector for output
-	myerrors = zeros(Float64, sum(test_idx))
+    # preallocate vector for output
+    errors = zeros(Float64, sum(test_idx))
 
-	# train_idx is the vector that indexes the TRAINING set
-	train_idx = !test_idx
+    # train_idx is the vector that indexes the TRAINING set
+    train_idx = convert(SharedVector{Int}, !test_idx)
+    test_idx  = convert(Vector{Int}, test_idx)
 
-	# how big is training sample?
-	const n = length(train_idx)
+    # how big is training sample?
+    n = sum(train_idx)
 
-	# allocate the arrays for the training set
-	x_train   = x[train_idx,:]
-	y_train   = y[train_idx] 
-	b         = SharedArray(Float64, p)
-	betas     = SharedArray(Float64, p,path_length)
-	perm      = collect(1:p)
-	inner     = Dict{Int,SharedVector{Float64}}()
+    # declare all temporary arrays
+    b        = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids)
+    perm     = SharedArray(Float64, p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
+    inner    = Dict{Int,SharedVector{Float64}}()
+    df       = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # X'(Y - Xbeta)
+    tempp    = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # temporary array of length p
+    dotprods = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # hold in memory the dot products for current index
+    bout     = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # output array for beta
+    tempn    = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # temporary array of length n
+    tempn2   = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # temporary array of length n
+    res      = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # Y - Xbeta
+    indices  = falses(p)                                                                          # indicate nonzero components of beta
+    n64      = convert(Float64, n)
 
-	# declare all temporary arrays
-	df         = SharedArray(Float64, p)	# X'(Y - Xbeta)
-	tempp      = SharedArray(Float64, p)	# temporary array of length p
-	dotprods   = SharedArray(Float64, p)	# hold in memory the dot products for current index
-	bout       = SharedArray(Float64, p)	# output array for beta
-	tempn      = SharedArray(Float64, n)	# temporary array of length n 
-	tempn2     = SharedArray(Float64, n)	# temporary array of length n 
-	res        = SharedArray(Float64, n)	# Y - Xbeta
-	bnonzeroes = falses(p)	        # indicate nonzero components of beta
+    # will return betas in a sparse matrix
+    betas     = spzeros(Float64, p, path_length)
 
-	# loop over each element of path
-	for i = 1:path_length
+    # loop over each element of path
+    @inbounds for i = 1:path_length
 
-		# compute the regularization path on the training set
-		bout = exchange_leastsq!(b, x_train, y_train, perm, i, inner=inner, max_iter=max_iter, quiet=quiet, n=n, p=p, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window = min(window, i), nrmsq=nrmsq) 
+        # compute the regularization path on the training set
+        exchange_leastsq!(b, x, y, perm, i, inner=inner, max_iter=max_iter, quiet=quiet, n=n, p=p, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window = min(window, i), n64=n64, indices=indices, pids=pids, means=means, invstds=invstds, n=n, p=p, Xb=Xb, tol=tol, mask_n = train_idx)
 
-		# find the support of bout
-		update_indices!(bnonzeroes, bout, p=p)
+        # find the support of bout
+        update_indices!(indices, b, p=p)
 
-		# subset training indices of x with support
-		x_refit    = x_train[:,bnonzeroes]
+        # compute estimated response Xb with $(path[i]) nonzeroes
+        xb!(Xb,x,b,indices,path[i],test_idx, means=means, invstds=invstds, pids=pids)
 
-		# perform ordinary least squares to refit support of bout
-		Xty        = BLAS.gemv('T', 1.0, x_refit, y_train)
-		XtX        = BLAS.gemm('T', 'N', 1.0, x_refit, x_refit)
-		b_refit    = XtX \ Xty 
+        # compute residuals
+        difference!(r,y,Xb)
+        mask!(r,test_idx,0,zero(Float64),n=n)
 
-		# put refitted values back in bout
-		bout[bnonzeroes] = b_refit
+        # compute out-of-sample error as squared residual averaged over size of test set
+        errors[i] = 0.5*sumabs2(r) / test_size
 
-		# copy bout back to b 
-		copy!(b, bout)
+        # store b
+        betas[:,i] = sparsevec(b)
+    end
 
-		# store b
-		update_col!(betas, b, i, n=p, p=path_length, a=1.0) 
-	end
-
-	# sparsify the betas
-	betas = sparse(betas)
-
-	# compute the mean out-of-sample error for the TEST set 
-	myerrors  = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
-
-	return myerrors
+    # compute the mean out-of-sample error for the TEST set
+    return errors
 end
 
 
-# PARALLEL CROSSVALIDATION ROUTINE FOR EXCHANGE ALGORITHM USING PLINK FILES 
-#
-# This function will perform n-fold cross validation for the ideal model size in the exchange algorithm for least squares regression.
-# It computes several paths as specified in the "paths" argument using the design matrix x and the response vector y.
-# Each path is asynchronously spawned using any available processor.
-# For each path, one fold is held out of the analysis for testing, while the rest of the data are used for training.
-# The function to compute each path, "one_fold()", will return a vector of out-of-sample errors (MSEs).
-# After all paths are computed, this function queries the RemoteRefs corresponding to these returned vectors.
-# It then "reduces" all components along each path to yield averaged MSEs for each model size.
-#
-# This variant operates on compressed PLINK matrices for GWAS analysis.
-#
-# Arguments:
-# -- x is the BEDFile object with the compressed PLINK matrices 
-# -- y is the n-vector of responses.
-# -- path is an Int to specify the length of the regularization path to compute 
-# -- nfolds is the number of folds to compute.
-#
-# Optional Arguments:
-# -- n is the number of samples. Defaults to length(y).
-# -- p is the number of predictors. Defaults to size(x,2).
-# -- folds is the partition of the data. Defaults to a random partition into "nfolds" disjoint sets.
-# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1e-4.
-# -- max_iter caps the number of permissible iterations in the IHT algorithm. Defaults to 1000.
-# -- quiet is a Boolean to activate output. Defaults to true (no output).
-#    NOTA BENE: each processor outputs feed to the console without regard to the others,
-#    so setting quiet=true can yield very messy output!
-# -- logreg is a Boolean to indicate whether or not to perform logistic regression. Defaults to false (do linear regression).
-# -- compute_model is a Boolean to indicate whether or not to recompute the best model. Defaults to false (do not recompute). 
-#
-# coded by Kevin L. Keys (2015)
-# klkeys@g.ucla.edu 
+"""
+    cv_exlstsq(x::BEDFile, y, path_length, q [, compute_model=false]) -> mses [, b, bidx]
+
+If called with a `BEDFile` object `x`, then `one_fold()` typeasserts all arrays as `SharedArray`s. The additional optional arguments are:
+
+- `pids`, a vector of process IDs. Defaults to `procs()`.
+- `means`, a vector of SNP means. Defaults to `mean(Float64, x, shared=true, pids=procs()`.
+- `invstds`, a vector of SNP precisions. Defaults to `invstd(x, means, shared=true, pids=procs()`.
+
+Because `BEDFile` objects require on-the-fly column standardization, the `nrmsq` argument is not used here.
+"""
 function cv_exlstsq(
-	x             :: BEDFile,
-	y             :: SharedVector{Float64}, 
-	path_length   :: Int, 
-	numfolds      :: Int; 
-	nrmsq         :: SharedVector{Float64} = sumsq(x, shared=true, means=means, invstds=invstds), 
-	means         :: SharedVector{Float64} = mean(Float64, x, shared=true),
-	invstds       :: SharedVector{Float64} = invstd(x, y=means),
-	folds         :: SharedVector{Int}     = cv_get_folds(y,numfolds), 
-	tol           :: Float64 = 1e-4, 
-	n             :: Int     = length(y),
-	p             :: Int     = size(x,2), 
-	max_iter      :: Int     = 1000, 
-	window        :: Int     = 20,
-	compute_model :: Bool    = false,
-	quiet         :: Bool    = true
-) 
+    x             :: BEDFile,
+    y             :: SharedVector{Float64},
+    path_length   :: Int,
+    q             :: Int;
+    pids          :: DenseVector{Int}      = procs(),
+    means         :: SharedVector{Float64} = mean(Float64, x, shared=true, pids=pids),
+    invstds       :: SharedVector{Float64} = invstd(x, y=means, shared=true, pids=pids),
+    folds         :: SharedVector{Int}     = cv_get_folds(sdata(y),q),
+    tol           :: Float64 = 1e-6,
+    n             :: Int     = length(y),
+    p             :: Int     = size(x,2),
+    max_iter      :: Int     = 100,
+    window        :: Int     = 20,
+    compute_model :: Bool    = false,
+    quiet         :: Bool    = true
+)
 
+    0 <= path_length <= p || throw(ArgumentError("Path length must be positive and cannot exceed number of predictors"))
 
-	0 <= path_length <= p || throw(ArgumentError("Path length must be positive and cannot exceed number of predictors"))
+    # preallocate vectors used in xval
+    mses    = zeros(Float64, path_length)   # vector to save mean squared errors
 
-	# preallocate vectors used in xval	
-	mses    = zeros(Float64, path_length)	# vector to save mean squared errors
-	my_refs = cell(numfolds)		        # cell array to store RemoteRefs
+    # want to compute a path for each fold
+    # the folds are computed asynchronously
+    # the @sync macro ensures that we wait for all of them to finish before proceeding
+    @sync @inbounds for i = 1:q
 
-	# want to compute a path for each fold
-	# the folds are computed asynchronously
-	# the @sync macro ensures that we wait for all of them to finish before proceeding 
-	@sync for i = 1:numfolds
+        # one_fold returns a vector of out-of-sample errors (MSE for linear regression, MCE for logistic regression)
+        mses[i] = @fetch(one_fold(x, y, path_length, folds, i, max_iter=max_iter, quiet=quiet, window=window, n=n, p=p, means=means, invstds=invstds, tol=tol))
+    end
 
-		# one_fold returns a vector of out-of-sample errors (MSE for linear regression, MCE for logistic regression) 
-		# @spawn(one_fold(...)) returns a RemoteRef to the result
-		# store that RemoteRef so that we can query the result later 
-		my_refs[i] = @spawn(one_fold(x, y, path_length, folds, i, max_iter=max_iter, quiet=quiet, window=window, n=n, p=p, nrmsq=nrmsq, means=means, invstds=invstds)) 
-	end
-	
-	# recover MSEs on each worker
-	for i = 1:numfolds
-		mses += fetch(my_refs[i])
-	end
+    # average mses
+    mses ./= q 
 
-	# average mses
-	mses ./= numfolds
+    # store a vector for path
+    path = collect(1:path_length)
 
-	# store a vector for path
-	path = collect(1:path_length)
+    # what is the best model size?
+    k = convert(Int, floor(mean(path[mses .== minimum(mses)])))
 
-	# what is the best model size?
-	k = convert(Int, floor(mean(path[mses .== minimum(mses)])))
+    # print results
+    quiet || begin
+        println("\n\nCrossvalidation Results:")
+        println("k\tMSE")
+        for i = 1:length(mses)
+            println(path[i], "\t", mses[i])
+        end
+        println("\nThe lowest MSE is achieved at k = ", k)
+    end
 
-	# print results
-	quiet || begin
-		println("\n\nCrossvalidation Results:")
-		println("k\tMSE")
-		for i = 1:length(mses)
-			println(path[i], "\t", mses[i])
-		end
-		println("\nThe lowest MSE is achieved at k = ", k) 
-	end
+    # recompute ideal model
+    if compute_model
 
-	# recompute ideal model
-	if compute_model
-		
-		# initialize beta vector
-		fill!(sdata(b), 0.0)
-		perm = collect(1:p)
-		x_inferred = zeros(Float64, n, k)
+        # initialize beta vector
+        fill!(sdata(b), zero(Float64))
+        perm = collect(1:p)
 
-		# first use exchange algorithm to extract model
-		exchange_leastsq!(b, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds) 
+        # first use exchange algorithm to extract model
+        exchange_leastsq!(b, x, y, perm, k, max_iter=max_iter, quiet=quiet, n=n, p=p, tol=tol, nrmsq=nrmsq, window=k)
 
-		# which components of beta are nonzero?
-		# cannot use binary indices here since we need to return Int indices
-		inferred_model = find( x -> x.!= 0.0, b)
+        # which components of beta are nonzero?
+        # cannot use binary indices here since we need to return Int indices
+        inferred_model = b .!= zero(Float64) 
+        bidx = find( x -> x.!= zero(Float64), b)
 
-		# allocate the submatrix of x corresponding to the inferred model
-		decompress_genotypes!(x_inferred, x, inferred_model, means=means, invstds=invstds)
+        # allocate the submatrix of x corresponding to the inferred model
+        x_inferred = zeros(Float64,n,sum(inferred_model))
+        decompress_genotypes!(x_inferred, x, inferred_model, means=means, invstds=invstds)
 
-		# now estimate b with the ordinary least squares estimator b = inv(x'x)x'y 
-		# return it with the vector of MSEs
-		Xty = BLAS.gemv('T', 1.0, x_inferred, y)	
-		XtX = BLAS.gemm('T', 'N', 1.0, x_inferred, x_inferred)
-		b2   = XtX \ Xty
-		return mses, b2, inferred_model
-	end
+        # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
+        # return it with the vector of MSEs
+        Xty = BLAS.gemv('T', one(Float64), x_inferred, y)
+        XtX = BLAS.gemm('T', 'N', one(Float64), x_inferred, x_inferred)
+        b2   = XtX \ Xty
+        return mses, b2, bidx 
+    end
 
-	return mses
+    return mses
 end

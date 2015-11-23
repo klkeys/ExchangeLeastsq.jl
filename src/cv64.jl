@@ -1,236 +1,229 @@
-# COMPUTE ONE FOLD IN A CROSSVALIDATION SCHEME FOR A REGULARIZATION PATH
-#
-# For a regularization path given by the vector "path", 
-# this function computes an out-of-sample error based on the indices given in the vector "test_idx". 
-# The vector test_idx indicates the portion of the data to use for testing.
-# The remaining data are used for training the model.
-#
-# Arguments:
-# -- x is the nxp design matrix.
-# -- y is the n-vector of responses.
-# -- path is an Int to determine how many elements of the path to compute. 
-# -- test_idx is the Int array that indicates which data to hold out for testing.
-#
-# Optional Arguments:
-# -- n is the number of samples. Defaults to length(y).
-# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1e-4.
-# -- max_iter caps the number of permissible iterations in the algorithm. Defaults to 1000.
-# -- quiet is a Boolean to activate output. Defaults to true (no output).
-#
-# coded by Kevin L. Keys (2015)
-# klkeys@g.ucla.edu 
+"""
+    one_fold(x,y,path_length,folds,fold) -> Vector{Float}
+
+For a regularization `path_length`,
+this function computes an out-of-sample error for fold given by `fold` in a `q`-fold crossvalidation scheme.
+The folds are indexed by the `Int` vector `folds`.
+
+Arguments:
+
+- `x` is the `n` x `p` design matrix.
+- `y` is the `n`-vector of responses.
+- `path_length` is an `Int` to determine the length of the regularization path to compute.
+- `folds` is the `Int` array that indicates which data to hold out for testing.
+- `fold` indexes the current fold.
+
+Optional Arguments:
+
+- `nrmsq` is the vector to store the squared norms of the columns of `x`. Defaults to `vec(sumabs2(x,1))`.
+- `tol` is the convergence tolerance to pass to the path computations. Defaults to `1e-6`.
+- `p` is the number of predictors in `x`. Defaults to `size(x,2)`.
+- `max_iter` caps the number of permissible iterations in the algorithm. Defaults to `100`.
+- `window` is an `Int` to dictate the dimension of the search window for potentially exchanging predictors.
+   Defaults to `p` (potentially exchange all predictors). Decreasing this quantity tells the algorithm to search through
+   fewer current active predictors, which can decrease compute time but can also degrade model recovery performance.
+- `quiet` is a Boolean to activate output. Defaults to `true` (no output).
+"""
 function one_fold(
-	x           :: DenseArray{Float64,2}, 
-	y           :: DenseArray{Float64,1}, 
-	path_length :: Int, 
-	folds       :: DenseArray{Int,1}, 
-	fold        :: Int; 
-	nrmsq       :: DenseArray{Float64,1} = vec(sumsq(x,1)),
-	p           :: Int  = size(x,2), 
-	max_iter    :: Int  = 1000, 
-	window      :: Int  = 20, 
-	quiet       :: Bool = true 
-) 
-
-	# find testing indices
-	test_idx = folds .== fold
-
-	# preallocate vector for output
-	myerrors = zeros(sum(test_idx))
-
-	# train_idx is the vector that indexes the TRAINING set
-	train_idx = !test_idx
-
-	# how big is training sample?
-	const n = length(train_idx)
-
-	# allocate the arrays for the training set
-	x_train   = x[train_idx,:]
-	y_train   = y[train_idx] 
-	b         = zeros(Float64, p)
-	betas     = zeros(Float64, p,path_length)
-	perm      = collect(1:p)
-
-	# allocate Dict to store inner prodcuts
-	inner = Dict{Int,DenseArray{Float64,1}}()
-
-	# declare all temporary arrays
-	res        = zeros(Float64, n)	# Y - Xbeta
-	df         = zeros(Float64, p)	# X'(Y - Xbeta)
-	tempn      = zeros(Float64, n)	# temporary array of length n 
-	tempn2     = zeros(Float64, n)	# temporary array of length n 
-	tempp      = zeros(Float64, p)	# temporary array of length p
-	dotprods   = zeros(Float64, p)	# hold in memory the dot products for current index
-	bnonzeroes = falses(p)			# indicate nonzero components of beta
-	bout       = zeros(Float64, p)	# output array for beta
-
-	# loop over each element of path
-	for i = 1:path_length
-
-		# compute the regularization path on the training set
-		bout = exchange_leastsq!(b, x_train, y_train, perm, i, inner=inner, max_iter=max_iter, quiet=quiet, n=n, p=p, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window = min(window, i), nrmsq=nrmsq) 
-
-		# find the support of bout
-		update_indices!(bnonzeroes, bout, p=p)
-
-		# subset training indices of x with support
-		x_refit    = x_train[:,bnonzeroes]
-
-		# perform ordinary least squares to refit support of bout
-		Xty        = BLAS.gemv('T', 1.0, x_refit, y_train)
-		XtX        = BLAS.gemm('T', 'N', 1.0, x_refit, x_refit)
-		b_refit    = XtX \ Xty 
-
-		# put refitted values back in bout
-		bout[bnonzeroes] = b_refit
-
-		# copy bout back to b 
-		copy!(b, bout)
-
-		# store b
-		update_col!(betas, b, i, n=p, p=path_length, a=1.0) 
-	end
-
-	# sparsify the betas
-	betas = sparse(betas)
-
-	# compute the mean out-of-sample error for the TEST set 
-	myerrors  = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
-
-	return myerrors
-end
-
-
-
-
-# CREATE UNSTRATIFIED CROSSVALIDATION PARTITION
-# This function will partition n indices into k disjoint sets for k-fold crossvalidation
-# Arguments:
-# -- n is the dimension of the data set to partition.
-# -- k is the number of disjoint sets in the partition.
-#
-# coded by Kevin L. Keys (2015)
-# klkeys@g.ucla.edu
-function cv_get_folds(y::Vector, nfolds::Int)
-	n, r = divrem(length(y), nfolds)
-	shuffle!([repmat(1:nfolds, n), 1:r])
-end
-
-
-
-
-
-# PARALLEL CROSSVALIDATION ROUTINE FOR EXCHANGE ALGORITHM 
-#
-# This function will perform n-fold cross validation for the ideal model size in the exchange algorithm for least squares regression.
-# It computes several paths as specified in the "paths" argument using the design matrix x and the response vector y.
-# Each path is asynchronously spawned using any available processor.
-# For each path, one fold is held out of the analysis for testing, while the rest of the data are used for training.
-# The function to compute each path, "one_fold()", will return a vector of out-of-sample errors (MSEs).
-# After all paths are computed, this function queries the RemoteRefs corresponding to these returned vectors.
-# It then "reduces" all components along each path to yield averaged MSEs for each model size.
-#
-# Arguments:
-# -- x is the nxp design matrix.
-# -- y is the n-vector of responses.
-# -- path is an Int to specify the length of the regularization path to compute 
-# -- nfolds is the number of folds to compute.
-#
-# Optional Arguments:
-# -- n is the number of samples. Defaults to length(y).
-# -- p is the number of predictors. Defaults to size(x,2).
-# -- folds is the partition of the data. Defaults to a random partition into "nfolds" disjoint sets.
-# -- tol is the convergence tolerance to pass to the path computations. Defaults to 1e-4.
-# -- max_iter caps the number of permissible iterations in the IHT algorithm. Defaults to 1000.
-# -- quiet is a Boolean to activate output. Defaults to true (no output).
-#    NOTA BENE: each processor outputs feed to the console without regard to the others,
-#    so setting quiet=true can yield very messy output!
-# -- logreg is a Boolean to indicate whether or not to perform logistic regression. Defaults to false (do linear regression).
-# -- compute_model is a Boolean to indicate whether or not to recompute the best model. Defaults to false (do not recompute). 
-#
-# coded by Kevin L. Keys (2015)
-# klkeys@g.ucla.edu 
-function cv_exlstsq(
-	x             :: DenseArray{Float64,2}, 
-	y             :: DenseArray{Float64,1}, 
-	path_length   :: Int, 
-	numfolds      :: Int; 
-	nrmsq         :: DenseArray{Float64,1} = vec(sumabs2(x,1)), 
-	folds         :: DenseArray{Int,1}     = cv_get_folds(y,numfolds), 
-	tol           :: Float64 = 1e-4, 
-	n             :: Int     = length(y),
-	p             :: Int     = size(x,2), 
-	max_iter      :: Int     = 1000, 
-	window        :: Int     = 20,
-	compute_model :: Bool    = false,
-	quiet         :: Bool    = true
+    x           :: DenseMatrix{Float64},
+    y           :: DenseVector{Float64},
+    path_length :: Int,
+    folds       :: DenseVector{Int},
+    fold        :: Int;
+    nrmsq       :: DenseVector{Float64} = vec(sumsq(x,1)),
+    tol         :: Float64 = 1e-6,
+    p           :: Int     = size(x,2),
+    max_iter    :: Int     = 100,
+    window      :: Int     = p,
+    quiet       :: Bool    = true
 )
 
-	0 <= path_length <= p || throw(ArgumentError("Path length must be positive and cannot exceed number of predictors"))
+    # find testing indices
+    test_idx = folds .== fold
 
-	# preallocate vectors used in xval	
-	mses    = zeros(Float64, path_length)	# vector to save mean squared errors
-	my_refs = cell(numfolds)		# cell array to store RemoteRefs
+    # preallocate vector for output
+    myerrors = zeros(Float64, sum(test_idx))
 
-	# want to compute a path for each fold
-	# the folds are computed asynchronously
-	# the @sync macro ensures that we wait for all of them to finish before proceeding 
-	@sync for i = 1:numfolds
+    # train_idx is the vector that indexes the TRAINING set
+    train_idx = !test_idx
 
-		# one_fold returns a vector of out-of-sample errors (MSE for linear regression, MCE for logistic regression) 
-		# @spawn(one_fold(...)) returns a RemoteRef to the result
-		# store that RemoteRef so that we can query the result later 
-		my_refs[i] = @spawn(one_fold(x, y, path_length, folds, i, max_iter=max_iter, quiet=quiet, window=window, n=n, p=p, nrmsq=nrmsq)) 
-	end
-	
-	# recover MSEs on each worker
-	for i = 1:numfolds
-		mses += fetch(my_refs[i])
-	end
+    # how big is training sample?
+    n = sum(train_idx)
 
-	# average mses
-	mses ./= numfolds
+    # allocate the arrays for the training set
+    x_train   = x[train_idx,:]
+    y_train   = y[train_idx]
 
-	# store a vector for path
-	path = collect(1:path_length)
+    # allocate Dict to store inner prodcuts
+    inner = Dict{Int,DenseVector{Float64}}()
 
-	# what is the best model size?
-	k = convert(Int, floor(mean(path[mses .== minimum(mses)])))
+    # declare all temporary arrays
+    b          = zeros(Float64, p)
+    perm       = collect(1:p)
+    res        = zeros(Float64, n)  # Y - Xbeta
+    df         = zeros(Float64, p)  # X'(Y - Xbeta)
+    tempn      = zeros(Float64, n)  # temporary array of length n
+    tempn2     = zeros(Float64, n)  # temporary array of length n
+    tempp      = zeros(Float64, p)  # temporary array of length p
+    dotprods   = zeros(Float64, p)  # hold in memory the dot products for current index
+#    bnonzeroes = falses(p)          # indicate nonzero components of beta
+#    bout       = zeros(Float64, p)  # output array for beta
 
-	# print results
-	quiet || begin
-		println("\n\nCrossvalidation Results:")
-		println("k\tMSE")
-		for i = 1:length(mses)
-			println(path[i], "\t", mses[i])
-		end
-		println("\nThe lowest MSE is achieved at k = ", k) 
-	end
+    # will return a sparse matrix of betas
+    betas      = spzeros(Float64, p,path_length)
 
-	# recompute ideal model
-	if compute_model
-		
-		# initialize beta vector
-		bp = zeros(Float64,p)
-		perm = collect(1:p)
+    # loop over each element of path
+    @inbounds for i = 1:path_length
 
-		# first use exchange algorithm to extract model
-		bp = exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p) 
+        # compute the regularization path on the training set
+        exchange_leastsq!(b, x_train, y_train, perm, i, inner=inner, max_iter=max_iter, quiet=quiet, n=n, p=p, nrmsq=nrmsq, res=res, df=df, tempn=tempn, tempn2=tempn2, tempp=tempp, dotprods=dotprods, window = min(window, i), nrmsq=nrmsq, tol=tol)
 
-		# which components of beta are nonzero?
-		# cannot use binary indices here since we need to return Int indices
-		inferred_model = find( function f(x) x.!= 0.0; end, bp)
+#        # find the support of bout
+#        update_indices!(bnonzeroes, bout, p=p)
+#
+#        # subset training indices of x with support
+#        x_refit    = x_train[:,bnonzeroes]
+#
+#        # perform ordinary least squares to refit support of bout
+#        Xty        = BLAS.gemv('T', one(Float64), x_refit, y_train)
+#        XtX        = BLAS.gemm('T', 'N', one(Float64), x_refit, x_refit)
+#        b_refit    = XtX \ Xty
+#
+#        # put refitted values back in bout
+#        bout[bnonzeroes] = b_refit
 
-		# allocate the submatrix of x corresponding to the inferred model
-		x_inferred = x[:,inferred_model]
+#        # copy bout back to b
+#        copy!(b, bout)
 
-		# now estimate b with the ordinary least squares estimator b = inv(x'x)x'y 
-		# return it with the vector of MSEs
-		Xty = BLAS.gemv('T', 1.0, x_inferred, y)	
-		XtX = BLAS.gemm('T', 'N', 1.0, x_inferred, x_inferred)
-		b = XtX \ Xty
-		return mses, b, inferred_model
-	end
+        # store b
+#        update_col!(betas, b, i, n=p, p=path_length, a=one(Float64))
+        betas[:,i] = sparsevec(b)
+    end
 
-	return mses
+#    # sparsify the betas
+#    betas = sparse(betas)
+
+    # compute the mean out-of-sample error for the TEST set
+    errors  = vec(0.5*sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ length(test_idx)
+
+    return errors
+end
+
+
+
+
+"""
+    cv_exlstsq(x, y, path_length, q [, compute_model=false]) -> mses [, b, bidx]
+
+This function will perform `q`-fold crossvalidation for the best model size in the exchange algorithm for least squares regression.
+Each path is asynchronously spawned using any available processor.
+The function to compute each path, `one_fold()`, will return a vector of mean out-of-sample errors (MSEs).
+`cv_exlstsq` reduces across the `q` folds yield averaged MSEs for each model size.
+
+Arguments:
+
+- `x` is the `n` x `p` design matrix.
+- `y` is the `n`-vector of responses.
+- `path_length` is an `Int` to specify the length of the regularization path to compute.
+- `q` is the number of folds to compute.
+
+Optional Arguments:
+
+- `nrmsq` is the vector to store the squared norms of the columns of `x`. Defaults to `vec(sumabs2(x,1))`.
+- `folds` is the `Int` array that indicates which data to hold out for testing. Defaults to `cv_get_folds(sdata(y),q)`.
+- `n` is the number of cases. Defaults to `length(y)`.
+- `p` is the number of predictors. Defaults to `size(x,2)`.
+- `folds` is the partition of the data. Defaults to a random partition into `q` disjoint sets.
+- `tol` is the convergence tolerance to pass to the path computations. Defaults to `1e-6`.
+- `max_iter` caps the number of permissible iterations in the exchange algorithm. Defaults to `100`.
+- `quiet` is a `Bool` to activate output. Defaults to `true` (no output).
+   *NOTA BENE*: each processor outputs feed to the console without regard to the others,
+   so setting `quiet=false` can yield very messy output!
+- `logreg` is a `Bool` to indicate whether or not to perform logistic regression. Defaults to `false` (do linear regression).
+- `compute_model` is a `Bool` to indicate whether or not to recompute the best model. Defaults to `false` (do not recompute).
+
+Output:
+
+- `mses` is a vector of averaged MSEs across all folds, with one component per model computed.
+
+If `compute_model = true`, then for the best model size `k_star` `cv_exlstsq` will also return
+
+- `b`, a vector of `k_star` components with the computed effect sizes
+- `bidx`, an `Int` vector of `k_star` components indicating the support of `b` at `k_star`.
+"""
+function cv_exlstsq(
+    x             :: DenseMatrix{Float64},
+    y             :: DenseVector{Float64},
+    path_length   :: Int,
+    q             :: Int;
+    nrmsq         :: DenseVector{Float64} = vec(sumabs2(x,1)),
+    folds         :: DenseVector{Int}     = cv_get_folds(sdata(y),q),
+    tol           :: Float64 = 1e-6,
+    n             :: Int     = length(y),
+    p             :: Int     = size(x,2),
+    max_iter      :: Int     = 100,
+    window        :: Int     = 20,
+    compute_model :: Bool    = false,
+    quiet         :: Bool    = true
+)
+
+    0 <= path_length <= p || throw(ArgumentError("Path length must be positive and cannot exceed number of predictors"))
+
+    # preallocate vectors used in xval
+    mses = zeros(Float64, path_length)   # vector to save mean squared errors
+
+    # want to compute a path for each fold
+    # the folds are computed asynchronously
+    # the @sync macro ensures that we wait for all of them to finish before proceeding
+    @sync @inbounds for i = 1:q
+
+        # one_fold returns a vector of out-of-sample errors (MSE for linear regression, MCE for logistic regression)
+        mses[i] = @fetch(one_fold(x, y, path_length, folds, i, max_iter=max_iter, quiet=quiet, window=window, p=p, nrmsq=nrmsq, tol=tol))
+    end
+
+    # average mses
+    mses ./= q
+
+    # store a vector for path
+    path = collect(1:path_length)
+
+    # what is the best model size?
+    k = convert(Int, floor(mean(path[mses .== minimum(mses)])))
+
+    # print results
+    quiet || begin
+        println("\n\nCrossvalidation Results:")
+        println("k\tMSE")
+        @inbounds for i = 1:length(mses)
+            println(path[i], "\t", mses[i])
+        end
+        println("\nThe lowest MSE is achieved at k = ", k)
+    end
+
+    # recompute ideal model
+    if compute_model
+
+        # initialize beta vector
+        bp = zeros(Float64,p)
+        perm = collect(1:p)
+
+        # first use exchange algorithm to extract model
+        exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, n=n, p=p, tol=tol, nrmsq=nrmsq, window=k)
+
+        # which components of beta are nonzero?
+        # cannot use binary indices here since we need to return Int indices
+        bidx = find( function f(x) x.!= zero(Float64); end, bp)
+
+        # allocate the submatrix of x corresponding to the inferred model
+        x_inferred = x[:,bidx]
+
+        # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
+        # return it with the vector of MSEs
+        Xty = BLAS.gemv('T', one(Float64), x_inferred, y)
+        XtX = BLAS.gemm('T', 'N', one(Float64), x_inferred, x_inferred)
+        b = XtX \ Xty
+        return mses, b, bidx
+    end
+
+    return mses
 end
