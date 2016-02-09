@@ -109,6 +109,82 @@ function one_fold(
     return errors
 end
 
+"""
+    pfold(x, y, path, folds, numfolds) -> Vector
+
+This function is the parallel execution kernel in `cv_exlstsq`. It is not meant to be called outside of `cv_exlstsq`.
+It will distribute `numfolds` crossvalidation folds across the processes supplied by the optional argument `pids` and call `one_fold` for each fold.
+Each fold will compute a regularization path `1:path`.
+`pfold` collects the vectors of MSEs returned by calling `one_fold` for each process, reduces them, and returns their average across all folds.
+"""
+function pfold(
+    x         :: SharedMatrix{Float64},
+    y         :: SharedVector{Float64},
+	path      :: Int, 
+	folds     :: SharedVector{Int},
+	numfolds  :: Int;
+    n         :: Int              = length(y),
+    p         :: Int              = size(x,2),
+	pids      :: DenseVector{Int} = procs(),
+    nrmsq     :: DenseVector{Float64} = vec(sumsq(x,1)),
+    tol       :: Float64          = 1e-6,
+	max_iter  :: Int              = 100,
+    window    :: Int              = p, 
+	quiet     :: Bool             = true,
+	refit     :: Bool             = true,
+)
+	# how many CPU processes can pfold use?
+	np = length(pids)
+
+	# report on CPU processes
+	quiet || println("pfold: np = ", np)
+	quiet || println("pids = ", pids)
+
+	# set up function to share state (indices of folds)
+	i = 1
+	nextidx() = (idx=i; i+=1; idx)
+
+	# preallocate cell array for results
+	results = cell(numfolds)
+
+	# master process will distribute tasks to workers
+	# master synchronizes results at end before returning
+	@sync begin
+
+		# loop over all workers
+		for worker in pids
+
+			# exclude process that launched pfold, unless only one process is available
+			if worker != myid() || np == 1
+
+				# asynchronously distribute tasks
+				@async begin
+					while true
+
+						# grab next fold
+						current_fold = nextidx()
+
+						# if current fold exceeds total number of folds then exit loop
+						current_fold > numfolds && break
+
+						# report distribution of fold to worker and device
+						quiet || print_with_color(:blue, "Computing fold $current_fold on worker $worker.\n\n")
+
+						# launch job on worker
+						# worker loads data from file paths and then computes the errors in one fold
+#                        sendto([worker], criterion=criterion, max_iter=max_iter, max_step=max_step)
+						results[current_fold] = remotecall_fetch(worker) do
+                            one_fold(x, y, path, folds, current_fold, nrmsq=nrmsq, tol=tol, p=p, max_iter=max_iter, window=window, quiet=quiet)
+						end # end remotecall_fetch()
+					end # end while
+				end # end @async
+			end # end if
+		end # end for
+	end # end @sync
+
+	# return reduction (row-wise sum) over results
+	return reduce(+, results[1], results) ./ numfolds
+end
 
 
 
@@ -156,6 +232,7 @@ function cv_exlstsq(
     y             :: DenseVector{Float64},
     path_length   :: Int,
     q             :: Int;
+	pids          :: DenseVector{Int}     = procs(),
     nrmsq         :: DenseVector{Float64} = vec(sumabs2(x,1)),
     folds         :: DenseVector{Int}     = cv_get_folds(sdata(y),q),
     tol           :: Float64 = 1e-6,
@@ -169,20 +246,21 @@ function cv_exlstsq(
 
     0 <= path_length <= p || throw(ArgumentError("Path length must be positive and cannot exceed number of predictors"))
 
-    # preallocate vectors used in xval
-    mses = zeros(Float64, path_length)   # vector to save mean squared errors
-
-    # want to compute a path for each fold
-    # the folds are computed asynchronously
-    # the @sync macro ensures that we wait for all of them to finish before proceeding
-    @sync @inbounds for i = 1:q
-
-        # one_fold returns a vector of out-of-sample errors (MSE for linear regression, MCE for logistic regression)
-        mses[i] = @fetch(one_fold(x, y, path_length, folds, i, max_iter=max_iter, quiet=quiet, window=window, p=p, nrmsq=nrmsq, tol=tol))
-    end
-
-    # average mses
-    mses ./= q
+#    # preallocate vectors used in xval
+#    mses = zeros(Float64, path_length)   # vector to save mean squared errors
+#
+#    # want to compute a path for each fold
+#    # the folds are computed asynchronously
+#    # the @sync macro ensures that we wait for all of them to finish before proceeding
+#    @sync @inbounds for i = 1:q
+#
+#        # one_fold returns a vector of out-of-sample errors (MSE for linear regression, MCE for logistic regression)
+#        mses[i] = @fetch(one_fold(x, y, path_length, folds, i, max_iter=max_iter, quiet=quiet, window=window, p=p, nrmsq=nrmsq, tol=tol))
+#    end
+#
+#    # average mses
+#    mses ./= q
+    mses = pfold(x, y, path_length, folds, q, n=n, p=p, pids=pids, nrmsq=nrmsq, tol=tol, max_iter=max_iter, quiet=quiet, refit=compute_model)
 
     # store a vector for path
     path = collect(1:path_length)
@@ -221,7 +299,13 @@ function cv_exlstsq(
         # return it with the vector of MSEs
         Xty = BLAS.gemv('T', one(Float64), x_inferred, y)
         XtX = BLAS.gemm('T', 'N', one(Float64), x_inferred, x_inferred)
-        b = XtX \ Xty
+        try
+            b = XtX \ Xty
+        catch e
+            warn("caught error: ", e, "\nSetting returned values of b to Inf")
+            b = zeros(Float64, length(bidx))
+            fill!(b, Inf)
+        end
         return mses, b, bidx
     end
 

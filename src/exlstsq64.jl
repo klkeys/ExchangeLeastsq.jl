@@ -1,3 +1,31 @@
+"""
+    update_partial_residuals!(r, y, x, perm, b, k [, n=length(r), p=length(b)])
+
+A subroutine to compute the partial residuals `r = Y - X*b` in-place based on a permutation vector `perm` that indexes the nonzeroes in `b`. 
+"""
+function update_partial_residuals!(
+    r    :: DenseVector{Float64}, 
+    y    :: DenseVector{Float64}, 
+    x    :: DenseMatrix{Float64}, 
+    perm :: DenseArray{Int,1}, 
+    b    :: DenseVector{Float64}, 
+    k    :: Int; 
+    n    :: Int = length(r), 
+    p    :: Int = length(b)
+)
+    k <= p || throw(error("update_partial_residuals!: k cannot exceed the length of b!"))
+    copy!(r, y)
+    @inbounds for j = 1:k 
+        idx = perm[j]
+        @inbounds @simd for i = 1:n 
+            r[i] += -b[idx]*x[i,idx]
+        end 
+    end 
+    return nothing 
+end
+
+
+
 function axpymbz!(
     j :: Int,
     y :: DenseVector{Float64},
@@ -28,49 +56,61 @@ function axpymbz!(
     end
 end
 
-
-function myrange(q::SharedVector{Float64})
-    idx = indexpids(q)
-    if idx == 0
-        # This worker is not assigned a piece
-        return one(Float64), one(Float64)
-    end
-    nchunks = length(procs(q))
-    splits = [round(Int,s) for s in linspace(0,length(q),nchunks+1)]
-    return splits[idx]+1 : splits[idx+1]
-end
-
-function axpymbz_shared_chunk!(
-    y      :: SharedVector{Float64},
-    a      :: Float64,
-    x      :: SharedVector{Float64},
-    b      :: Float64,
-    z      :: SharedVector{Float64},
-    irange :: UnitRange{Int}
-)
-    @inbounds for i in irange
-        y[i] = axpymbz!(i,y,a,x,b,z)
-    end
-end
-
-axpymbz_shared!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
-
-"""
-If called with `SharedArray` vectors, then `axpymbz!()` automatically partitions the indices of the vectors and farms the computations to all available processes.
-"""
 function axpymbz!(
-    y::SharedVector{Float64},
-    a::Float64,
-    x::SharedVector{Float64},
-    b::Float64,
-    z::SharedVector{Float64}
+    y :: SharedVector{Float64},
+    a :: Float64,
+    x :: SharedVector{Float64},
+    b :: Float64,
+    z :: SharedVector{Float64};
+    p :: Int = length(y)
 )
-    @sync begin
-        for p in procs(y)
-            @async remotecall_wait(p, axpymbz_shared!, y, a, x, b, z)
-        end
+    @inbounds for i = 1:p
+        y[i] = axpymbz!(i, y, a, x, b, z)
     end
 end
+
+#function myrange(q::SharedVector{Float64})
+#    idx = indexpids(q)
+#    if idx == 0
+#        # This worker is not assigned a piece
+#        return one(Float64), one(Float64)
+#    end
+#    nchunks = length(procs(q))
+#    splits = [round(Int,s) for s in linspace(0,length(q),nchunks+1)]
+#    return splits[idx]+1 : splits[idx+1]
+#end
+#
+#function axpymbz_shared_chunk!(
+#    y      :: SharedVector{Float64},
+#    a      :: Float64,
+#    x      :: SharedVector{Float64},
+#    b      :: Float64,
+#    z      :: SharedVector{Float64},
+#    irange :: UnitRange{Int}
+#)
+#    @inbounds for i in irange
+#        y[i] = axpymbz!(i,y,a,x,b,z)
+#    end
+#end
+#
+#axpymbz_shared!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
+#
+#"""
+#If called with `SharedArray` vectors, then `axpymbz!()` automatically partitions the indices of the vectors and farms the computations to all available processes.
+#"""
+#function axpymbz!(
+#    y::SharedVector{Float64},
+#    a::Float64,
+#    x::SharedVector{Float64},
+#    b::Float64,
+#    z::SharedVector{Float64}
+#)
+#    @sync begin
+#        for p in procs(y)
+#            @async remotecall_wait(p, axpymbz_shared!, y, a, x, b, z)
+#        end
+#    end
+#end
 
 """
     exchange_leastsq!(bvec,x,y,perm,r) -> bvec
@@ -92,6 +132,7 @@ Arguments:
 - `r` is the desired number of nonzero components in `bvec`.
 
 Optional Arguments:
+
 - `inner` is a `Dict` for storing Hessian inner products dynamically as needed instead of precomputing all of `x' * x`. Defaults to an empty `Dict{Int,DenseVector{Float}}()`.
 - `n` and `p` are the dimensions of `x`; the former defaults to `length(y)` while the latter defaults to `size(x,2)`.
 - `nrmsq` is the vector to store the squared norms of the columns of `x`. Defaults to `vec(sumabs2(x,1))`.
@@ -168,7 +209,7 @@ function exchange_leastsq!(
     selectperm!(perm, bvec, r, by=abs, rev=true, initialized=true)
 
     # compute partial residuals based on top r components of perm vector
-    RegressionTools.update_partial_residuals!(res, y, x, perm, bvec, r, n=n, p=p)
+    update_partial_residuals!(res, y, x, perm, bvec, r, n=n, p=p)
 
     # save value of RSS before starting algorithm
     rss = 0.5*sumabs2(res)
@@ -273,4 +314,4 @@ function exchange_leastsq!(
     throw(error("Maximum iterations $(max_iter) reached! Return value may not be correct.\n"))
     return bvec
 
-end # end exchange_leastsq
+end # end exchange_leastsq!

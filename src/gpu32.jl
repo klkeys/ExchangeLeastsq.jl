@@ -1,5 +1,5 @@
 function exchange_leastsq!(
-    b        :: DenseVector{Float32}, 
+    b           :: DenseVector{Float32}, 
     x           :: BEDFile, 
     y           :: DenseVector{Float32}, 
     perm        :: DenseVector{Int}, 
@@ -58,7 +58,7 @@ function exchange_leastsq!(
     n == length(tempn)    || throw(DimensionMismatch("length(y) != length(tempn)"))
     n == length(tempn2)   || throw(DimensionMismatch("length(y) != length(tempn2)"))
     n == length(res)      || throw(DimensionMismatch("length(y) != length(res)"))
-    p == length(b)     || throw(DimensionMismatch("Number of predictors != length(b)"))
+    p == length(b)        || throw(DimensionMismatch("Number of predictors != length(b)"))
     p == length(df)       || throw(DimensionMismatch("length(b) != length(df)"))
     p == length(tempp)    || throw(DimensionMismatch("length(b) != length(tempp)"))
     p == length(dotprods) || throw(DimensionMismatch("length(b) != length(dotprods)"))
