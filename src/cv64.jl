@@ -299,11 +299,11 @@ function cv_exlstsq(
         # return it with the vector of MSEs
         Xty = BLAS.gemv('T', one(Float64), x_inferred, y)
         XtX = BLAS.gemm('T', 'N', one(Float64), x_inferred, x_inferred)
+        b = zeros(Float64, length(bidx))
         try
             b = XtX \ Xty
         catch e
             warn("caught error: ", e, "\nSetting returned values of b to Inf")
-            b = zeros(Float64, length(bidx))
             fill!(b, Inf)
         end
         return mses, b, bidx
