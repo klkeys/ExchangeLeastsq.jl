@@ -1,41 +1,29 @@
 """
     update_partial_residuals!(r, y, x, perm, b, k [, n=length(r), p=length(b)])
 
-A subroutine to compute the partial residuals `r = Y - X*b` in-place based on a permutation vector `perm` that indexes the nonzeroes in `b`. 
+A subroutine to compute the partial residuals `r = Y - X*b` in-place based on a permutation vector `perm` that indexes the nonzeroes in `b`.
 """
-function update_partial_residuals!(
-    r    :: DenseVector{Float64}, 
-    y    :: DenseVector{Float64}, 
-    x    :: DenseMatrix{Float64}, 
-    perm :: DenseArray{Int,1}, 
-    b    :: DenseVector{Float64}, 
-    k    :: Int; 
-    n    :: Int = length(r), 
+function update_partial_residuals!{T <: Float}(
+    r    :: DenseVector{T},
+    y    :: DenseVector{T},
+    x    :: DenseMatrix{T},
+    perm :: DenseArray{Int,1},
+    b    :: DenseVector{T},
+    k    :: Int;
+    n    :: Int = length(r),
     p    :: Int = length(b)
 )
     k <= p || throw(error("update_partial_residuals!: k cannot exceed the length of b!"))
     copy!(r, y)
-    @inbounds for j = 1:k 
+    @inbounds for j = 1:k
         idx = perm[j]
-        @inbounds @simd for i = 1:n 
+        @inbounds @simd for i = 1:n
             r[i] += -b[idx]*x[i,idx]
-        end 
-    end 
-    return nothing 
+        end
+    end
+    return nothing
 end
 
-
-
-function axpymbz!(
-    j :: Int,
-    y :: DenseVector{Float64},
-    a :: Float64,
-    x :: DenseVector{Float64},
-    b :: Float64,
-    z :: DenseVector{Float64}
-)
-    y[j] + a*x[j] - b*z[j]
-end
 
 """
     axpymbz!(y,a,x,b,z[, p=length(y)])
@@ -43,74 +31,20 @@ end
 The silly name is based on BLAS `axpy()` (A*X Plus Y), except that this function performs *A**X* *P*lus *Y* *M*inus *B**Z*.
 The idea behind `axpymz!()` is to perform the computation in one pass over the arrays. The output is the same as `y = y + a*x - b*z`.
 """
-function axpymbz!(
-    y :: Vector{Float64},
-    a :: Float64,
-    x :: Vector{Float64},
-    b :: Float64,
-    z :: Vector{Float64};
+function axpymbz!{T <: Float}(
+    y :: DenseVector{T},
+    a :: T,
+    x :: DenseVector{T},
+    b :: T,
+    z :: DenseVector{T};
     p :: Int = length(y)
 )
     @inbounds for i = 1:p
-        y[i] = axpymbz!(i, y, a, x, b, z)
+        y[i] = y[j] + a*x[j] - b*z[j]
     end
 end
 
-function axpymbz!(
-    y :: SharedVector{Float64},
-    a :: Float64,
-    x :: SharedVector{Float64},
-    b :: Float64,
-    z :: SharedVector{Float64};
-    p :: Int = length(y)
-)
-    @inbounds for i = 1:p
-        y[i] = axpymbz!(i, y, a, x, b, z)
-    end
-end
 
-#function myrange(q::SharedVector{Float64})
-#    idx = indexpids(q)
-#    if idx == 0
-#        # This worker is not assigned a piece
-#        return one(Float64), one(Float64)
-#    end
-#    nchunks = length(procs(q))
-#    splits = [round(Int,s) for s in linspace(0,length(q),nchunks+1)]
-#    return splits[idx]+1 : splits[idx+1]
-#end
-#
-#function axpymbz_shared_chunk!(
-#    y      :: SharedVector{Float64},
-#    a      :: Float64,
-#    x      :: SharedVector{Float64},
-#    b      :: Float64,
-#    z      :: SharedVector{Float64},
-#    irange :: UnitRange{Int}
-#)
-#    @inbounds for i in irange
-#        y[i] = axpymbz!(i,y,a,x,b,z)
-#    end
-#end
-#
-#axpymbz_shared!(y::SharedVector{Float64}, a::Float64, x::SharedVector{Float64}, b::Float64, z::SharedVector{Float64}) = axpymbz_shared_chunk!(y,a,x,b,z,myrange(y))
-#
-#"""
-#If called with `SharedArray` vectors, then `axpymbz!()` automatically partitions the indices of the vectors and farms the computations to all available processes.
-#"""
-#function axpymbz!(
-#    y::SharedVector{Float64},
-#    a::Float64,
-#    x::SharedVector{Float64},
-#    b::Float64,
-#    z::SharedVector{Float64}
-#)
-#    @sync begin
-#        for p in procs(y)
-#            @async remotecall_wait(p, axpymbz_shared!, y, a, x, b, z)
-#        end
-#    end
-#end
 
 """
     exchange_leastsq!(bvec,x,y,perm,r) -> bvec
@@ -149,26 +83,26 @@ Optional Arguments:
 - `tol` is the convergence tolerance. Defaults to `1e-6`.
 - `quiet` is a `Bool` to control output. Defaults to `false` (full output).
 """
-function exchange_leastsq!(
-    bvec     :: DenseVector{Float64},
-    x        :: DenseMatrix{Float64},
-    y        :: DenseVector{Float64},
+function exchange_leastsq!{T <: Float}(
+    bvec     :: DenseVector{T},
+    x        :: DenseMatrix{T},
+    y        :: DenseVector{T},
     perm     :: DenseVector{Int},
     r        :: Int;
-    inner    :: Dict{Int, DenseVector{Float64}} = Dict{Int,DenseVector{Float64}}(),
+    inner    :: Dict{Int, DenseVector{T}} = Dict{Int,DenseVector{T}}(),
     n        :: Int = length(y),
     p        :: Int = size(x,2),
-    nrmsq    :: DenseVector{Float64} = vec(sumabs2(x,1)),
-    df       :: DenseVector{Float64} = zeros(Float64, p),
-    dotprods :: DenseVector{Float64} = zeros(Float64, p),
-    tempp    :: DenseVector{Float64} = zeros(Float64, p),
-    res      :: DenseVector{Float64} = zeros(Float64, n),
-    tempn    :: DenseVector{Float64} = zeros(Float64, n),
-    tempn2   :: DenseVector{Float64} = zeros(Float64, n),
-    window   :: Int     = r,
-    max_iter :: Int     = 100,
-    tol      :: Float64 = 1e-6,
-    quiet    :: Bool    = false
+    nrmsq    :: DenseVector{T} = vec(sumabs2(x,1)),
+    df       :: DenseVector{T} = zeros(T, p),
+    dotprods :: DenseVector{T} = zeros(T, p),
+    tempp    :: DenseVector{T} = zeros(T, p),
+    res      :: DenseVector{T} = zeros(T, n),
+    tempn    :: DenseVector{T} = zeros(T, n),
+    tempn2   :: DenseVector{T} = zeros(T, n),
+    window   :: Int  = r,
+    max_iter :: Int  = 100,
+    tol      :: T    = convert(T, 1e-6),
+    quiet    :: Bool = false
 )
     # error checking
     n == size(x,1)        || throw(DimensionMismatch("length(Y) != size(X,1)"))
@@ -188,35 +122,34 @@ function exchange_leastsq!(
 
 
     # declare algorithm variables
-    i       = 0                         # used for iterations
-    iter    = 0                         # used for outermost loop
-    j       = 0                         # used for iterations
-    k       = 0                         # used for indexing
-    l       = 0                         # used for indexing
-    m       = 0                         # used for indexing
-    idx     = 0                         # used for indexing
-    a       = zero(Float64)
-    b       = zero(Float64)
-    adb     = zero(Float64)             # = a / b
-    c       = zero(Float64)
-    d       = zero(Float64)
-    betal   = zero(Float64)             # store lth component of bvec
-    rss     = zero(Float64)             # residual sum of squares || Y - XB ||^2
-    old_rss = oftype(zero(Float64),Inf) # previous residual sum of squares
+    i       = 0               # used for iterations
+    iter    = 0               # used for outermost loop
+    j       = 0               # used for iterations
+    k       = 0               # used for indexing
+    l       = 0               # used for indexing
+    m       = 0               # used for indexing
+    idx     = 0               # used for indexing
+    a       = zero(T)
+    b       = zero(T)
+    adb     = zero(T)         # = a / b
+    c       = zero(T)
+    d       = zero(T)
+    betal   = zero(T)         # store lth component of bvec
+    rss     = zero(T)         # residual sum of squares || Y - XB ||^2
+    old_rss = oftype(tol,Inf) # previous residual sum of squares
 
     # obtain top r components of bvec in magnitude
-#    selectpermk!(perm,bvec, r, p=p)
     selectperm!(perm, bvec, r, by=abs, rev=true, initialized=true)
 
     # compute partial residuals based on top r components of perm vector
     update_partial_residuals!(res, y, x, perm, bvec, r, n=n, p=p)
 
     # save value of RSS before starting algorithm
-    rss = 0.5*sumabs2(res)
+    rss = sumabs2(res) / 2
 
     # compute inner products of X and residuals
     # this is basically the negative gradient
-    BLAS.gemv!('T', one(Float64), x, res, zero(Float64), df)
+    BLAS.gemv!('T', one(T), x, res, zero(T), df)
 
     # outer loop controls number of total iterations for algorithm run on one r
     for iter = 1:(max_iter)
@@ -230,15 +163,15 @@ function exchange_leastsq!(
             # save information for current value of i
             l     = perm[i]
             betal = bvec[l]
-            update_col!(tempn, x, l, n=n, p=p, a=one(Float64))  # tempn now holds X[:,l]
+            update_col!(tempn, x, l, n=n, p=p, a=one(T))  # tempn now holds X[:,l]
 
             # if necessary, compute inner products of current predictor against all other predictors
             # store this information in Dict inner
             # for current index, hold dot products in memory for duration of inner loop
             # the if/else statement below is the same as but faster than
-            # > dotprods = get!(inner, l, BLAS.gemv('T', one(Float64), X, tempn))
+            # > dotprods = get!(inner, l, BLAS.gemv('T', one(T), X, tempn))
             if !haskey(inner, l)
-                inner[l] = BLAS.gemv('T', one(Float64), x, tempn)
+                inner[l] = BLAS.gemv('T', one(T), x, tempn)
             end
             copy!(dotprods,inner[l])
 
@@ -266,15 +199,15 @@ function exchange_leastsq!(
 
             # now want to update residuals with current best predictor
             m = perm[k]
-            update_col!(tempn2, x, m, n=n, p=p, a=one(Float64)) # tempn2 now holds X[:,m]
+            update_col!(tempn2, x, m, n=n, p=p, a=one(T)) # tempn2 now holds X[:,m]
             axpymbz!(res, betal, tempn, adb, tempn2, p=n)
 
             # if necessary, compute inner product of current predictor against all other predictors
             # save in our Dict for future reference
             # compare in performance to
-            # > tempp = get!(inner, m, BLAS.gemv('T', one(Float64), X, tempn2))
+            # > tempp = get!(inner, m, BLAS.gemv('T', one(T), X, tempn2))
             if !haskey(inner, m)
-                inner[m] = BLAS.gemv('T', one(Float64), x, tempn2)
+                inner[m] = BLAS.gemv('T', one(T), x, tempn2)
             end
             copy!(tempp, inner[m])
 
@@ -287,13 +220,13 @@ function exchange_leastsq!(
             perm[k]    = j
             bvec[m] = adb
             if k != i
-                bvec[j] = zero(Float64)
+                bvec[j] = zero(T)
             end
 
         end # end middle loop over predictors
 
         # update residual sum of squares
-        rss = 0.5*sumabs2(res)
+        rss = sumabs2(res) / 2
 
         # test for descent failure
         # if no descent failure, then test for convergence

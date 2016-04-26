@@ -23,14 +23,13 @@ export test_exchangeleastsq_plink
 "An alias for the `OpenCL` module name"
 const cl = OpenCL
 
-include("gpu64.jl")
-include("gpu32.jl")
-include("gwas64.jl")
-include("gwas32.jl")
-include("cv64.jl")
-include("cv32.jl")
-include("exlstsq64.jl")
-include("exlstsq32.jl")
+# typealias for Float32/Float64
+typealias Float Union{Float32, Float64}
+
+include("gpu.jl")
+include("gwas.jl")
+include("cv.jl")
+include("exlstsq.jl")
 include("test.jl")
 
 end # end module ExchangeLeastsq

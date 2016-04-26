@@ -4,42 +4,42 @@
 If called with a `BEDFile` object `x`, then `exchange_leastsq!()` typeasserts all arrays as `SharedArray`s. The additional optional arguments are:
 
 - `pids`, a vector of process IDs. Defaults to `procs()`.
-- `means`, a vector of SNP means. Defaults to `mean(Float64, x, shared=true, pids=procs()`.
+- `means`, a vector of SNP means. Defaults to `mean(T, x, shared=true, pids=procs()`.
 - `invstds`, a vector of SNP precisions. Defaults to `invstd(x, means, shared=true, pids=procs()`.
 - `Xb` is an `n`-vector storing the estimated response `x*b`.
 - `indices` is a `BitArray` that indexes the nonzeroes in `b`.
-- `mask_n` is an `Int` array that applies a bitmask to the samples. This enables efficient crossvalidation calculations by avoiding subsetting operations on the `BEDFile` `x`. 
+- `mask_n` is an `Int` array that applies a bitmask to the samples. This enables efficient crossvalidation calculations by avoiding subsetting operations on the `BEDFile` `x`.
   `mask_n` should only contain `0`s (exclude) and `1`s (include). Defaults to a `SharedArray` of `n` ones, which includes all data.
-- `n64` is a floating point copy of problem dimension `n` used in intermediate calculations to avoid repeated `Int` conversion. Defaults to `convert(Float64,n)`.
+- `n64` is a floating point copy of problem dimension `n` used in intermediate calculations to avoid repeated `Int` conversion. Defaults to `convert(T,n)`.
 
-Because `BEDFile` objects require on-the-fly column standardization, the `nrmsq` argument is not used here.
+`BEDFile` objects require on-the-fly column standardization, which eliminates the need for the `nrmsq` argument.
 """
-function exchange_leastsq!(
-    b        :: SharedVector{Float64},
+function exchange_leastsq!{T <: Float}(
+    b        :: SharedVector{T},
     x        :: BEDFile,
-    y        :: SharedVector{Float64},
+    y        :: SharedVector{T},
     perm     :: SharedVector{Int},
     r        :: Int;
-    inner    :: Dict{Int,SharedVector{Float64}} = Dict{Int,SharedVector{Float64}}(),
-    pids     :: DenseVector{Int}      = procs(),
-    means    :: SharedVector{Float64} = mean(Float64,x, shared=true, pids=pids),
-    invstds  :: SharedVector{Float64} = invstd(x, means, pids=pids),
-    n        :: Int                   = length(y),
-    p        :: Int                   = size(x,2),
-    df       :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
-    dotprods :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
-    tempp    :: SharedVector{Float64} = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
-    Xb       :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
-    res      :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
-    tempn    :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
-    tempn2   :: SharedVector{Float64} = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids),
-    mask_n   :: SharedVector{Float64} = SharedArray(Int,     n, init = S -> S[localindexes(S)] = one(Int),      pids=pids),
-    indices  :: BitArray{1}           = falses(p),
-    window   :: Int                   = r,
-    max_iter :: Int                   = 100,
-    n64      :: Float64               = convert(Float64, n),
-    tol      :: Float64               = 1e-6,
-    quiet    :: Bool                  = false
+    inner    :: Dict{Int,SharedVector{T}} = Dict{Int,SharedVector{T}}(),
+    pids     :: DenseVector{Int} = procs(),
+    means    :: SharedVector{T}  = mean(T,x, shared=true, pids=pids),
+    invstds  :: SharedVector{T}  = invstd(x, means, pids=pids),
+    n        :: Int              = length(y),
+    p        :: Int              = size(x,2),
+    df       :: SharedVector{T}  = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids),
+    dotprods :: SharedVector{T}  = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids),
+    tempp    :: SharedVector{T}  = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids),
+    Xb       :: SharedVector{T}  = SharedArray(T, n, init = S -> S[localindexes(S)] = zero(T), pids=pids),
+    res      :: SharedVector{T}  = SharedArray(T, n, init = S -> S[localindexes(S)] = zero(T), pids=pids),
+    tempn    :: SharedVector{T}  = SharedArray(T, n, init = S -> S[localindexes(S)] = zero(T), pids=pids),
+    tempn2   :: SharedVector{T}  = SharedArray(T, n, init = S -> S[localindexes(S)] = zero(T), pids=pids),
+    mask_n   :: SharedVector{T}  = SharedArray(Int,     n, init = S -> S[localindexes(S)] = one(Int),      pids=pids),
+    indices  :: BitArray{1}      = falses(p),
+    window   :: Int              = r,
+    max_iter :: Int              = 100,
+    n64      :: T                = convert(T, n),
+    tol      :: T                = 1e-6,
+    quiet    :: Bool             = false
 )
 
     # error checking
@@ -53,7 +53,7 @@ function exchange_leastsq!(
     p == length(dotprods) || throw(DimensionMismatch("length(b) != length(dotprods)"))
     p == length(perm)     || throw(DimensionMismatch("length(b) != length(perm)"))
     0 <= r <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(b)"))
-    tol >= eps(Float64)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
+    tol >= eps(T)   || throw(ArgumentError("Global tolerance must exceed machine precision"))
     max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
     0 <= window <= r      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
 
@@ -61,19 +61,19 @@ function exchange_leastsq!(
     sum((mask_n .== 1) $ (mask_n .== 0)) == n || throw(ArgumentError("Argument mask_n can only contain 1s and 0s"))
 
     # declare algorithm variables
-    i       = 0                         # used for iterations
-    iter    = 0                         # used for outermost loop
-    j       = 0                         # used for iterations
-    k       = 0                         # used for indexing
-    l       = 0                         # used for indexing
-    m       = 0                         # used for indexing
-    idx     = 0                         # used for indexing
-    a       = zero(Float64)
-    adb     = zero(Float64)             # = a / b
-    c       = zero(Float64)
-    betal   = zero(Float64)             # store lth component of b
-    rss     = zero(Float64)             # residual sum of squares || Y - XB ||^2
-    old_rss = oftype(zero(Float64),Inf) # previous residual sum of squares
+    i       = 0               # used for iterations
+    iter    = 0               # used for outermost loop
+    j       = 0               # used for iterations
+    k       = 0               # used for indexing
+    l       = 0               # used for indexing
+    m       = 0               # used for indexing
+    idx     = 0               # used for indexing
+    a       = zero(T)
+    adb     = zero(T)         # = a / b
+    c       = zero(T)
+    betal   = zero(T)         # store lth component of b
+    rss     = zero(T)         # residual sum of squares || Y - XB ||^2
+    old_rss = oftype(tol,Inf) # previous residual sum of squares
 
     # obtain top r components of b in magnitude
     selectperm!(perm, sdata(b), k, by=abs, rev=true, initialized=true)
@@ -84,10 +84,10 @@ function exchange_leastsq!(
 
     # update residuals based on Xb
     difference!(res, y, Xb, n=n)
-    mask!(res, mask_n, 0, zero(Float64), n=n)
+    mask!(res, mask_n, 0, zero(T), n=n)
 
     # save value of RSS before starting algorithm
-    rss = 0.5*sumabs2(res)
+    rss = sumabs2(res) / 2
 
     # compute inner products of X and residuals
     # this is basically the negative gradient
@@ -106,7 +106,7 @@ function exchange_leastsq!(
             l     = perm[i]
             betal = b[l]
             decompress_genotypes!(tempn, x, l, means, invstds) # tempn now holds X[:,l]
-            mask!(tempn, mask_n, 0, zero(Float64), n=n)
+            mask!(tempn, mask_n, 0, zero(T), n=n)
 
             # if necessary, compute inner products of current predictor against all other predictors
             # store this information in Dict inner
@@ -140,9 +140,9 @@ function exchange_leastsq!(
             # now want to update residuals with current best predictor
             m = perm[k]
             decompress_genotypes!(tempn2, x, m, means, invstds) # tempn now holds X[:,l]
-            mask!(tempn2, mask_n, 0, zero(Float64), n=n)
+            mask!(tempn2, mask_n, 0, zero(T), n=n)
             axpymbz!(res, betal, tempn, adb, tempn2, p=n)
-            mask!(res, mask_n, 0, zero(Float64), n=n)
+            mask!(res, mask_n, 0, zero(T), n=n)
 
             # if necessary, compute inner product of current predictor against all other predictors
             # save in our Dict for future reference
@@ -160,14 +160,14 @@ function exchange_leastsq!(
             perm[k] = j
             b[m]    = adb
             if k != i
-                b[j] = zero(Float64)
+                b[j] = zero(T)
             end
 
         end # end middle loop over predictors
 
         # update residual sum of squares
-        mask!(res, mask_n, 0, zero(Float64), n=n)
-        rss = 0.5*sumabs2(res)
+        mask!(res, mask_n, 0, zero(T), n=n)
+        rss = sumabs2(res) / 2
 
         # test for numerical instability
         isnan(rss) && throw(error("Objective function is NaN!"))
@@ -199,32 +199,32 @@ end # end exchange_leastsq
 If called with a `BEDFile` object `x`, then `one_fold()` typeasserts all arrays as `SharedArray`s. The additional optional arguments are:
 
 - `pids`, a vector of process IDs. Defaults to `procs()`.
-- `means`, a vector of SNP means. Defaults to `mean(Float64, x, shared=true, pids=procs()`.
+- `means`, a vector of SNP means. Defaults to `mean(T, x, shared=true, pids=procs()`.
 - `invstds`, a vector of SNP precisions. Defaults to `invstd(x, means, shared=true, pids=procs()`.
 
 Because `BEDFile` objects require on-the-fly column standardization, the `nrmsq` argument is not used here.
 """
-function one_fold(
+function one_fold{T <: Float}(
     x           :: BEDFile,
-    y           :: SharedVector{Float64},
+    y           :: SharedVector{T},
     path_length :: Int,
     folds       :: SharedVector{Int},
     fold        :: Int;
-    pids        :: DenseVector{Int}      = procs(),
-    means       :: SharedVector{Float64} = mean(Float64, x, shared=true, pids=pids),
-    invstds     :: SharedVector{Float64} = invstd(x, y=means, pids=pids),
-    tol         :: Float64 = 1e-6,
-    p           :: Int     = size(x,2),
-    max_iter    :: Int     = 100,
-    window      :: Int     = 20,
-    quiet       :: Bool    = true
+    pids        :: DenseVector{Int} = procs(),
+    means       :: SharedVector{T}  = mean(T, x, shared=true, pids=pids),
+    invstds     :: SharedVector{T}  = invstd(x, y=means, pids=pids),
+    tol         :: T    = 1e-6,
+    p           :: Int  = size(x,2),
+    max_iter    :: Int  = 100,
+    window      :: Int  = 20,
+    quiet       :: Bool = true
 )
 
     # find testing indices
     test_idx = folds .== fold
 
     # preallocate vector for output
-    errors = zeros(Float64, sum(test_idx))
+    errors = zeros(T, sum(test_idx))
 
     # train_idx is the vector that indexes the TRAINING set
     train_idx = convert(SharedVector{Int}, !test_idx)
@@ -234,21 +234,21 @@ function one_fold(
     n = sum(train_idx)
 
     # declare all temporary arrays
-    b        = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids)
-    perm     = SharedArray(Float64, p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
-    inner    = Dict{Int,SharedVector{Float64}}()
-    df       = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # X'(Y - Xbeta)
-    tempp    = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # temporary array of length p
-    dotprods = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # hold in memory the dot products for current index
-    bout     = SharedArray(Float64, p, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # output array for beta
-    tempn    = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # temporary array of length n
-    tempn2   = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # temporary array of length n
-    res      = SharedArray(Float64, n, init = S -> S[localindexes(S)] = zero(Float64), pids=pids) # Y - Xbeta
+    inner    = Dict{Int,SharedVector{T}}()
+    b        = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids)
+    perm     = SharedArray(T, p, init = S -> S[localindexes(S)] = localindexes(S), pids=pids)
+    df       = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids) # X'(Y - Xbeta)
+    tempp    = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids) # temporary array of length p
+    dotprods = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids) # hold in memory the dot products for current index
+    bout     = SharedArray(T, p, init = S -> S[localindexes(S)] = zero(T), pids=pids) # output array for beta
+    tempn    = SharedArray(T, n, init = S -> S[localindexes(S)] = zero(T), pids=pids) # temporary array of length n
+    tempn2   = SharedArray(T, n, init = S -> S[localindexes(S)] = zero(T), pids=pids) # temporary array of length n
+    res      = SharedArray(T, n, init = S -> S[localindexes(S)] = zero(T), pids=pids) # Y - Xbeta
     indices  = falses(p)                                                                          # indicate nonzero components of beta
-    n64      = convert(Float64, n)
+    n64      = convert(T, n)
 
     # will return betas in a sparse matrix
-    betas     = spzeros(Float64, p, path_length)
+    betas     = spzeros(T, p, path_length)
 
     # loop over each element of path
     @inbounds for i = 1:path_length
@@ -264,10 +264,10 @@ function one_fold(
 
         # compute residuals
         difference!(r,y,Xb)
-        mask!(r,test_idx,0,zero(Float64),n=n)
+        mask!(r,test_idx,0,zero(T),n=n)
 
         # compute out-of-sample error as squared residual averaged over size of test set
-        errors[i] = 0.5*sumabs2(r) / test_size
+        errors[i] = sumabs2(r) / (2*test_size)
 
         # store b
         betas[:,i] = sparsevec(b)
@@ -279,38 +279,38 @@ end
 
 
 """
-    cv_exlstsq(x::BEDFile, y, path_length, q [, compute_model=false]) -> mses [, b, bidx]
+    cv_exlstsq(x::BEDFile, y, path_length, q [, refit=false]) -> mses [, b, bidx]
 
 If called with a `BEDFile` object `x`, then `one_fold()` typeasserts all arrays as `SharedArray`s. The additional optional arguments are:
 
 - `pids`, a vector of process IDs. Defaults to `procs()`.
-- `means`, a vector of SNP means. Defaults to `mean(Float64, x, shared=true, pids=procs()`.
+- `means`, a vector of SNP means. Defaults to `mean(T, x, shared=true, pids=procs()`.
 - `invstds`, a vector of SNP precisions. Defaults to `invstd(x, means, shared=true, pids=procs()`.
 
-Because `BEDFile` objects require on-the-fly column standardization, the `nrmsq` argument is not used here.
+`BEDFile` objects require on-the-fly column standardization, which renders the `nrmsq` argument unnecessary. 
 """
-function cv_exlstsq(
-    x             :: BEDFile,
-    y             :: SharedVector{Float64},
-    path_length   :: Int,
-    q             :: Int;
-    pids          :: DenseVector{Int}      = procs(),
-    means         :: SharedVector{Float64} = mean(Float64, x, shared=true, pids=pids),
-    invstds       :: SharedVector{Float64} = invstd(x, y=means, shared=true, pids=pids),
-    folds         :: SharedVector{Int}     = cv_get_folds(sdata(y),q),
-    tol           :: Float64 = 1e-6,
-    n             :: Int     = length(y),
-    p             :: Int     = size(x,2),
-    max_iter      :: Int     = 100,
-    window        :: Int     = 20,
-    compute_model :: Bool    = false,
-    quiet         :: Bool    = true
+function cv_exlstsq{T <: Float}(
+    x           :: BEDFile,
+    y           :: SharedVector{T},
+    path_length :: Int,
+    q           :: Int;
+    pids        :: DenseVector{Int}  = procs(),
+    means       :: SharedVector{T}   = mean(T, x, shared=true, pids=pids),
+    invstds     :: SharedVector{T}   = invstd(x, y=means, shared=true, pids=pids),
+    folds       :: SharedVector{Int} = cv_get_folds(sdata(y),q),
+    tol         :: T    = convert(T, 1e-6),
+    n           :: Int  = length(y),
+    p           :: Int  = size(x,2),
+    max_iter    :: Int  = 100,
+    window      :: Int  = 20,
+    refit       :: Bool = false,
+    quiet       :: Bool = true
 )
 
     0 <= path_length <= p || throw(ArgumentError("Path length must be positive and cannot exceed number of predictors"))
 
     # preallocate vectors used in xval
-    mses    = zeros(Float64, path_length)   # vector to save mean squared errors
+    mses    = zeros(T, path_length)   # vector to save mean squared errors
 
     # want to compute a path for each fold
     # the folds are computed asynchronously
@@ -322,7 +322,7 @@ function cv_exlstsq(
     end
 
     # average mses
-    mses ./= q 
+    mses ./= q
 
     # store a vector for path
     path = collect(1:path_length)
@@ -341,30 +341,30 @@ function cv_exlstsq(
     end
 
     # recompute ideal model
-    if compute_model
+    if refit
 
         # initialize beta vector
-        fill!(sdata(b), zero(Float64))
+        fill!(sdata(b), zero(T))
         perm = collect(1:p)
 
         # first use exchange algorithm to extract model
-        exchange_leastsq!(b, x, y, perm, k, max_iter=max_iter, quiet=quiet, n=n, p=p, tol=tol, nrmsq=nrmsq, window=k)
+        exchange_leastsq!(b, x, y, perm, k, max_iter=max_iter, quiet=quiet, n=n, p=p, tol=tol, window=k)
 
         # which components of beta are nonzero?
         # cannot use binary indices here since we need to return Int indices
-        inferred_model = b .!= zero(Float64) 
-        bidx = find( x -> x.!= zero(Float64), b)
+        inferred_model = b .!= zero(T)
+        bidx = find(b)
 
         # allocate the submatrix of x corresponding to the inferred model
-        x_inferred = zeros(Float64,n,sum(inferred_model))
+        x_inferred = zeros(T, n, sum(inferred_model))
         decompress_genotypes!(x_inferred, x, inferred_model, means=means, invstds=invstds)
 
         # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
         # return it with the vector of MSEs
-        Xty = BLAS.gemv('T', one(Float64), x_inferred, y)
-        XtX = BLAS.gemm('T', 'N', one(Float64), x_inferred, x_inferred)
+        Xty = BLAS.gemv('T', one(T), x_inferred, y)
+        XtX = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
         b2   = XtX \ Xty
-        return mses, b2, bidx 
+        return mses, b2, bidx
     end
 
     return mses
