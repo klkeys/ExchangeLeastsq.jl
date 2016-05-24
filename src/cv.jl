@@ -94,7 +94,7 @@ It will distribute `numfolds` crossvalidation folds across the processes supplie
 Each fold will compute a regularization path `1:path`.
 `pfold` collects the vectors of MSEs returned by calling `one_fold` for each process, reduces them, and returns their average across all folds.
 """
-function pfold(
+function pfold{T <: Float}(
     x         :: SharedMatrix{T},
     y         :: SharedVector{T},
     path      :: Int,
@@ -245,10 +245,11 @@ function cv_exlstsq{T <: Float}(
     if refit
 
         # initialize beta vector
-        bp = zeros(T,p)
+        bp   = zeros(T,p)
+        perm = collect(1:p) 
 
         # first use exchange algorithm to extract model
-        exchange_leastsq!(bp, x, y, path, k, max_iter=max_iter, quiet=quiet, n=n, p=p, tol=tol, nrmsq=nrmsq, window=k)
+        exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, n=n, p=p, tol=tol, nrmsq=nrmsq, window=k)
 
         # which components of beta are nonzero?
         # cannot use binary indices here since we need to return Int indices

@@ -39,8 +39,8 @@ function axpymbz!{T <: Float}(
     z :: DenseVector{T};
     p :: Int = length(y)
 )
-    @inbounds for i = 1:p
-        y[i] = y[j] + a*x[j] - b*z[j]
+    @inbounds @simd for i = 1:p
+        y[i] = y[i] + a*x[i] - b*z[i]
     end
 end
 

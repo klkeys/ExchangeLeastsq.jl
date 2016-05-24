@@ -451,7 +451,7 @@ function cv_exlstsq(
     folds       :: DenseVector{Int},
     q           :: Int;
     pids        :: DenseVector{Int} = procs(),
-%    tol         :: T    = convert(T, 1e-4),
+#    tol         :: T    = convert(T, 1e-4),
     max_iter    :: Int  = 100,
     wg_size     :: Int  = 512,
     quiet       :: Bool = true,
