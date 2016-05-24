@@ -353,7 +353,7 @@ function pfold(
     q          :: Int;
     devindices :: DenseVector{Int} = ones(Int,q),
     pids       :: DenseVector{Int} = procs(),
-    tol        :: T    = convert(T, 1e-6),
+#    tol        :: T    = convert(T, 1e-6),
     max_iter   :: Int  = 100,
     window     :: Int  = 20,
     wg_size    :: Int  = 512,
@@ -412,7 +412,8 @@ function pfold(
                                 means   = SharedArray(abspath(meanfile), T, (p,), pids=pids)
                                 invstds = SharedArray(abspath(invstdfile), T, (p,), pids=pids)
 
-                                one_fold(x, y, pathlength, kernfile, folds, current_fold, max_iter=max_iter, quiet=quiet, means=means, invstds=invstds, devidx=devidx, pids=pids, n=n, p=p, header=header, window=window, tol=tol, wg_size=wg_size)
+#                                one_fold(x, y, pathlength, kernfile, folds, current_fold, max_iter=max_iter, quiet=quiet, means=means, invstds=invstds, devidx=devidx, pids=pids, n=n, p=p, header=header, window=window, tol=tol, wg_size=wg_size)
+                                one_fold(x, y, pathlength, kernfile, folds, current_fold, max_iter=max_iter, quiet=quiet, means=means, invstds=invstds, devidx=devidx, pids=pids, n=n, p=p, header=header, window=window, wg_size=wg_size)
                         end # end remotecall_fetch()
                     end # end while
                 end # end @async
@@ -450,7 +451,7 @@ function cv_exlstsq(
     folds       :: DenseVector{Int},
     q           :: Int;
     pids        :: DenseVector{Int} = procs(),
-    tol         :: T    = convert(T, 1e-4),
+%    tol         :: T    = convert(T, 1e-4),
     max_iter    :: Int  = 100,
     wg_size     :: Int  = 512,
     quiet       :: Bool = true,
@@ -485,6 +486,7 @@ function cv_exlstsq(
     # want to compute a path for each fold
     # the folds are computed asynchronously
     # only use the worker processes
+#    mses = pfold(T, xfile, xtfile, x2file, yfile, meanfile, invstdfile, path_length, kernfile, folds, q, max_iter=max_iter, quiet=quiet, devindices=devindices, pids=pids, header=header, window=window, tol=tol)
     mses = pfold(T, xfile, xtfile, x2file, yfile, meanfile, invstdfile, path_length, kernfile, folds, q, max_iter=max_iter, quiet=quiet, devindices=devindices, pids=pids, header=header, window=window)
 
     # average mses
@@ -512,6 +514,7 @@ function cv_exlstsq(
         x_inferred = zeros(T, n, k)
 
         # first use exchange algorithm to extract model
+#        exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds, tol=tol)
         exchange_leastsq!(bp, x, y, perm, k, max_iter=max_iter, quiet=quiet, p=p, means=means, invstds=invstds)
 
         # which components of beta are nonzero?
@@ -533,4 +536,5 @@ function cv_exlstsq(
 end
 
 # default type for cv_exlstsq is Float64
-cv_iht(xfile::ASCIIString, xtfile::ASCIIString, x2file::ASCIIString, yfile::ASCIIString, meanfile::ASCIIString, invstdfile::ASCIIString, path::DenseVector{Int}, kernfile::ASCIIString, folds::DenseVector{Int}, q::Int; pids::DenseVector{Int}=procs(), tol::Float64=1e-4, max_iter::Int=100, max_step::Int=50, window::Int=20, wg_size::Int=512, quiet::Bool=true, refit::Bool=false, header::Bool=false) = cv_iht(Float64, xfile, xtfile, x2file, yfile, meanfile, invstdfile, path, kernfile, folds, q, pids=pids, tol=tol, max_iter=max_iter, max_step=max_step, wg_size=wg_size, quiet=quiet, refit=refit, header=header, window=window)
+#cv_iht(xfile::ASCIIString, xtfile::ASCIIString, x2file::ASCIIString, yfile::ASCIIString, meanfile::ASCIIString, invstdfile::ASCIIString, path::DenseVector{Int}, kernfile::ASCIIString, folds::DenseVector{Int}, q::Int; pids::DenseVector{Int}=procs(), tol::Float64=1e-4, max_iter::Int=100, max_step::Int=50, window::Int=20, wg_size::Int=512, quiet::Bool=true, refit::Bool=false, header::Bool=false) = cv_iht(Float64, xfile, xtfile, x2file, yfile, meanfile, invstdfile, path, kernfile, folds, q, pids=pids, tol=tol, max_iter=max_iter, max_step=max_step, wg_size=wg_size, quiet=quiet, refit=refit, header=header, window=window)
+cv_iht(xfile::ASCIIString, xtfile::ASCIIString, x2file::ASCIIString, yfile::ASCIIString, meanfile::ASCIIString, invstdfile::ASCIIString, path::DenseVector{Int}, kernfile::ASCIIString, folds::DenseVector{Int}, q::Int; pids::DenseVector{Int}=procs(), max_iter::Int=100, max_step::Int=50, window::Int=20, wg_size::Int=512, quiet::Bool=true, refit::Bool=false, header::Bool=false) = cv_iht(Float64, xfile, xtfile, x2file, yfile, meanfile, invstdfile, path, kernfile, folds, q, pids=pids, max_iter=max_iter, max_step=max_step, wg_size=wg_size, quiet=quiet, refit=refit, header=header, window=window)
