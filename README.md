@@ -10,35 +10,39 @@ From a Julia prompt, type
 
 ## Usage
 
-The workhorse of _ExchangeLeastsq.jl_ is the function `exchange_leastsq!` which requires five arguments:
+The workhorse of _ExchangeLeastsq.jl_ is the function `exlstsq` which requires five arguments:
 
-* `bvec`, a vector beta of statistical coefficients
 * `x`, the statistical design matrix
 * `y`, the response vector
-* `perm`, an index vector that sorts `bvec` by magnitude
-* `r`, the number of coefficients to include in the model
+* `models`, an integer vector of model sizes to test
 
-Testing one value of `r` is unlikely to provide much insight. `exchange_leastsq!` works best in a loop.
-For example, if `models` is an integer vector of model sizes to try, then one can construct a regularization path via
+The function `exlstsq` returns a sparse matrix `betas` of estimated models:
+ 
+    betas = exlstsq(x, y, models) 
 
-    for i in models
-        exchange_leastsq!(bvec, x, y, perm, i)
-    end
+Optional arguments with defaults include:
 
-Observe that `exchange_leastsq!` mutates `bvec`. When looping through several model sizes,
-any information about the model should be stored in a separate copy of `bvec`.
-
+* `v = ELSQVariables(x, y)` is a container object of temporary arrays for `exlstsq`
+* `window = maximum(models)` is a window size of active predictors that `exlstsq` uses when searching through active predictors. Generally a smaller value of `window` means that `exlstsq` sifts through fewer active models, thereby increasing speed and sacrificing accuracy.
+* `max_iter = 100` is the maximum number of iterations that `exlstsq` will take in any inner loop
+* `tol = 1e-6` is the convergence tolerance
+* `quiet = true` controls output to the console. Setting `quiet = false` causes `exlstsq` to print all inner loop information.
+ 
 ## Crossvalidation
 
 _ExchangeLeastsq.jl_ is best used to obtain the ideal model size to predict `y`.
 It furnishes a crossvalidation routine for this purpose.
 _ExchangeLeastsq.jl_ makes use of `SharedArrays` to enable crossvalidation in a multicore shared memory environment.
-Users can perform _q_-fold crossvalidation for a number `n` of model sizes by calling 
+Users can perform _q_-fold crossvalidation for a vector `models` of model sizes by calling 
 
-    mses, b, bidx = cv_exlstsq(x, y, n, q)
+    cv_output = cv_exlstsq(x, y, models, q)
 
-`b` and `bidx` contain the coefficients and indices, respectively, of the ideal model size.
-`mses` contains the vector of mean squared errors.
+Here `cv_output` is an `ELSQCrossvalidationResults` container object with the following fields: 
+
+* `mses` contains the vector of mean squared errors
+* `k` is the best crossvalidated model size
+* `b` and `bidx` contain the coefficients and indices, respectively, of the model size `k`.
+
 
 ## GWAS
 
