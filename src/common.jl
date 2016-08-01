@@ -9,8 +9,9 @@ type ELSQVariables{T <: Float, V <: DenseVector}
     tempn2   :: V
     perm     :: DenseVector{Int} 
     inner    :: Dict{Int, DenseVector{T}}
+    mask_n   :: DenseVector{Int}
 
-    ELSQVariables(b::DenseVector{T}, nrmsq::DenseVector{T}, df::DenseVector{T}, dotprods::DenseVector{T}, tempp::DenseVector{T}, r::DenseVector{T}, tempn::DenseVector{T}, tempn2::DenseVector{T}, perm::DenseVector{Int}, inner::Dict{Int, DenseVector{T}}) = new(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner)
+    ELSQVariables(b::DenseVector{T}, nrmsq::DenseVector{T}, df::DenseVector{T}, dotprods::DenseVector{T}, tempp::DenseVector{T}, r::DenseVector{T}, tempn::DenseVector{T}, tempn2::DenseVector{T}, perm::DenseVector{Int}, inner::Dict{Int, DenseVector{T}}, mask_n::DenseVector{Int}) = new(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
 end
 
 function ELSQVariables{T <: Float}(
@@ -23,9 +24,10 @@ function ELSQVariables{T <: Float}(
     tempn    :: DenseVector{T},
     tempn2   :: DenseVector{T},
     perm     :: DenseVector{Int}, 
-    inner    :: Dict{Int, DenseVector{T}}
+    inner    :: Dict{Int, DenseVector{T}},
+    mask_n   :: DenseVector{Int}
 )
-    ELSQVariables{T, typeof(b)}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner)
+    ELSQVariables{T, typeof(b)}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
 end
 
 function ELSQVariables{T <: Float}(
@@ -45,12 +47,44 @@ function ELSQVariables{T <: Float}(
     tempn    = zeros(T, n)
     tempn2   = zeros(T, n)
     perm     = collect(1:p)
+    mask_n   = zeros(Int, n)
 
     # form dictionary
     inner = Dict{Int, DenseVector{T}}()
 
     # return container object
-    ELSQVariables{T, DenseVector{T}}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner)
+    ELSQVariables{T, DenseVector{T}}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
+end
+
+
+function ELSQVariables{T <: Float}(
+    x :: BEDFile{T},
+    y :: SharedVector{T}
+    z :: DenseVector{Int}
+)
+    # dimensions of arrays
+    n,p = size(x)
+
+    # process ids?
+    pids = procs(x)
+
+    # form arrays
+    b        = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    nrmsq    = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = 1/length(y)) 
+    df       = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    dotprods = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    tempp    = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    r        = SharedArray(T, (n,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    tempn    = SharedArray(T, (n,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    tempn2   = SharedArray(T, (n,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    perm     = collect(1:p)
+    mask_n   = zeros(Int, n)
+
+    # form dictionary
+    inner = Dict{Int, DenseVector{T}}()
+
+    # return container object
+    ELSQVariables{T, DenseVector{T}}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
 end
 
 immutable ELSQCrossvalidationResults{T <: Float}
