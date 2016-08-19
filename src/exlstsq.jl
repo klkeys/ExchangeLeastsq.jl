@@ -1,5 +1,5 @@
 """
-    update_partial_residuals!(r, y, x, perm, b, k [, n=length(r), p=length(b)])
+    update_partial_residuals!(r, y, x, perm, b, k)
 
 A subroutine to compute the partial residuals `r = Y - X*b` in-place based on a permutation vector `perm` that indexes the nonzeroes in `b`.
 """
@@ -9,8 +9,7 @@ function update_partial_residuals!{T <: Float}(
     x    :: DenseMatrix{T},
     perm :: DenseArray{Int,1},
     b    :: DenseVector{T},
-    k    :: Int;
-    p    :: Int = length(b)
+    k    :: Int
 )
     copy!(r, y)
     @inbounds for j = 1:k
@@ -60,7 +59,7 @@ Arguments:
 - `v` is the `ELSQVariables` object housing all temporary arrays, including `b` 
 - `x` is the n x p statistical design matrix.
 - `y` is the n-dimensional response vector.
-- `k` is the desired number of nonzero components in `bvec`.
+- `k` is the desired number of nonzero components in `b`. 
 
 Optional Arguments:
 
@@ -82,7 +81,7 @@ function exchange_leastsq!{T <: Float}(
     window   :: Int  = k,
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
-    quiet    :: Bool = false
+    quiet    :: Bool = true 
 )
 
     # declare algorithm variables
@@ -213,13 +212,37 @@ function exchange_leastsq!{T <: Float}(
 
 end # end exchange_leastsq!
 
+"""
+    exlstsq(x, y) -> ELSQResults 
 
+For a statistical model `b`, `exlstsq` minimizes the residual sum of squares
 
+    0.5*sumabs2( y - x*b )
+
+subject to `b` having no more than `k` nonzero components. `exlstsq` will compute a `b` for several model sizes `k`.
+
+Arguments:
+
+- `x` is the n x p statistical design matrix.
+- `y` is the n-dimensional response vector.
+
+Optional Arguments:
+
+- `v` is the `ELSQVariables` object housing all temporary arrays, including `b`. 
+* `models` is the integer vector of model sizes to test. It defaults to `collect(1:p)`, where `p = min(20, size(x,2))`.
+- `window` is an `Int` to dictate the maximum size of the search window for potentially exchanging predictors.
+   Defaults to `maximum(models)` (all predictors for each model size are exchangeable). 
+   Decreasing this quantity tells the algorithm to search through fewer current active predictors, 
+   which can decrease compute time but can also degrade model recovery performance.
+- `max_iter` is the maximum permissible number of iterations. Defaults to `100`.
+- `tol` is the convergence tolerance. Defaults to `1e-6`.
+- `quiet` is a `Bool` to control output. Defaults to `false` (full output).
+"""
 function exlstsq{T <: Float}(
     x        :: DenseMatrix{T},
-    y        :: DenseVector{T},
-    models   :: DenseVector{Int};
+    y        :: DenseVector{T};
     v        :: ELSQVariables{T} = ELSQVariables(x, y), 
+    models   :: DenseVector{Int} = collect(1:min(20, size(x,2))),
     window   :: Int  = maximum(models),
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
@@ -238,7 +261,10 @@ function exlstsq{T <: Float}(
 
     # loop through models
     for i in models
-        exchange_leastsq!(v, x, y, i, window=i, max_iter=max_iter, tol=tol, quiet=quiet, n=n, p=p)
+
+        # monitor output
+        quiet || println("Testing model size $i.")
+        exchange_leastsq!(v, x, y, i, window=min(window,i), max_iter=max_iter, tol=tol, quiet=quiet, n=n, p=p)
         betas[:,i] = sparse(v.b)
     end
 

@@ -1,33 +1,43 @@
 type ELSQVariables{T <: Float, V <: DenseVector}
     b        :: V
-    nrmsq    :: V
+    nrmsq    :: Vector{T}
     df       :: V
-    dotprods :: V
-    tempp    :: V
+    dotprods :: Vector{T}
+#    tempp    :: Vector{T} 
+    tempp    :: V 
     r        :: V
-    tempn    :: V
+#    tempn    :: Vector{T} 
+#    tempn2   :: Vector{T}
+    tempn    :: V 
     tempn2   :: V
+    xb       :: V
     perm     :: DenseVector{Int} 
-    inner    :: Dict{Int, DenseVector{T}}
+    inner    :: Dict{Int, Vector{T}}
     mask_n   :: DenseVector{Int}
+    idx      :: BitArray{1}
 
-    ELSQVariables(b::DenseVector{T}, nrmsq::DenseVector{T}, df::DenseVector{T}, dotprods::DenseVector{T}, tempp::DenseVector{T}, r::DenseVector{T}, tempn::DenseVector{T}, tempn2::DenseVector{T}, perm::DenseVector{Int}, inner::Dict{Int, DenseVector{T}}, mask_n::DenseVector{Int}) = new(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
+    ELSQVariables(b::DenseVector{T}, nrmsq::DenseVector{T}, df::DenseVector{T}, dotprods::DenseVector{T}, tempp::DenseVector{T}, r::DenseVector{T}, tempn::DenseVector{T}, tempn2::DenseVector{T}, xb::DenseVector{T}, perm::DenseVector{Int}, inner::Dict{Int, Vector{T}}, mask_n::DenseVector{Int}, idx::BitArray{1}) = new(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, xb, perm, inner, mask_n, idx)
 end
 
 function ELSQVariables{T <: Float}(
     b        :: DenseVector{T},
-    nrmsq    :: DenseVector{T},
+    nrmsq    :: Vector{T},
     df       :: DenseVector{T},
-    dotprods :: DenseVector{T},
+    dotprods :: Vector{T},
+#    tempp    :: Vector{T},
     tempp    :: DenseVector{T},
     r        :: DenseVector{T},
+#    tempn    :: Vector{T},
+#    tempn2   :: Vector{T},
     tempn    :: DenseVector{T},
     tempn2   :: DenseVector{T},
+    xb       :: DenseVector{T},
     perm     :: DenseVector{Int}, 
-    inner    :: Dict{Int, DenseVector{T}},
-    mask_n   :: DenseVector{Int}
+    inner    :: Dict{Int, Vector{T}},
+    mask_n   :: DenseVector{Int},
+    idx      :: BitArray{1}
 )
-    ELSQVariables{T, typeof(b)}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
+    ELSQVariables{T, typeof(b)}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, xb, perm, inner, mask_n, idx)
 end
 
 function ELSQVariables{T <: Float}(
@@ -39,28 +49,32 @@ function ELSQVariables{T <: Float}(
 
     # form arrays
     b        = zeros(T, p) 
-    nrmsq    = vec(sumabs2(x,1))
+    nrmsq    = vec(sumabs2(x,1)) :: Vector{T}
     df       = zeros(T, p)
     dotprods = zeros(T, p)
     tempp    = zeros(T, p)
     r        = zeros(T, n)
     tempn    = zeros(T, n)
     tempn2   = zeros(T, n)
+    xb       = zeros(T, n) 
     perm     = collect(1:p)
-    mask_n   = zeros(Int, n)
+#    mask_n   = zeros(Int, n)
+    mask_n   = ones(Int, n)
+    idx      = falses(p)
 
     # form dictionary
-    inner = Dict{Int, DenseVector{T}}()
+#    inner = Dict{Int, DenseVector{T}}()
+    inner = Dict{Int, Vector{T}}()
 
     # return container object
-    ELSQVariables{T, DenseVector{T}}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
+    ELSQVariables{eltype(y), typeof(y)}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, xb, perm, inner, mask_n, idx)
 end
 
 
 function ELSQVariables{T <: Float}(
     x :: BEDFile{T},
-    y :: SharedVector{T}
-    z :: DenseVector{Int}
+    y :: SharedVector{T},
+#    z :: DenseVector{Int}
 )
     # dimensions of arrays
     n,p = size(x)
@@ -69,22 +83,38 @@ function ELSQVariables{T <: Float}(
     pids = procs(x)
 
     # form arrays
-    b        = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
-    nrmsq    = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = 1/length(y)) 
-    df       = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
-    dotprods = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
-    tempp    = SharedArray(T, (p,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
-    r        = SharedArray(T, (n,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
-    tempn    = SharedArray(T, (n,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
-    tempn2   = SharedArray(T, (n,), pids=pids, init = S -> S[localindexes(S)] = zero(T)) 
+    b        = SharedArray(T, (p,), pids=pids) :: typeof(y)
+    nrmsq    = (length(y) - 1) * ones(T, p) 
+    df       = SharedArray(T, (p,), pids=pids) :: typeof(y)
+    dotprods = zeros(T, p) 
+#    tempp    = zeros(T, p) 
+    tempp    = SharedArray(T, (p,), pids=pids) :: typeof(y)
+    r        = SharedArray(T, (n,), pids=pids) :: typeof(y)
+#    tempn    = zeros(T, n) 
+#    tempn2   = zeros(T, n) 
+    tempn    = SharedArray(T, (n,), pids=pids) :: typeof(y)
+    tempn2   = SharedArray(T, (n,), pids=pids) :: typeof(y)
+    xb       = SharedArray(T, (n,), pids=pids) :: typeof(y)
     perm     = collect(1:p)
-    mask_n   = zeros(Int, n)
+#    mask_n   = zeros(Int, n)
+    mask_n   = ones(Int, n)
+    idx      = falses(p)
 
     # form dictionary
-    inner = Dict{Int, DenseVector{T}}()
+    inner = Dict{Int, Vector{T}}()
 
     # return container object
-    ELSQVariables{T, DenseVector{T}}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, perm, inner, mask_n)
+    ELSQVariables{eltype(y), typeof(y)}(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, xb, perm, inner, mask_n, idx)
+end
+
+function ELSQVariables{T <: Float}(
+    x :: BEDFile{T},
+    y :: SharedVector{T},
+    z :: DenseVector{Int} # <-- this should be the bitmask
+)
+    w = ELSQVariables(x,y)
+    copy!(w.mask_n, z)
+    return w
 end
 
 immutable ELSQCrossvalidationResults{T <: Float}
@@ -92,24 +122,44 @@ immutable ELSQCrossvalidationResults{T <: Float}
     b    :: Vector{T}
     bidx :: Vector{Int}
     k    :: Int
+    path :: Vector{Int}
+    bids :: Vector{UTF8String}
 end
 
+#function Base.display(x::ELSQCrossvalidationResults)
+#    println("Crossvalidation Results:")
+#    println("Best model size is $k predictors")
+#    println("\tPredictor\tValue\tMSE")
+#    for i in eachindex(x.bidx)
+#        println("\t", x.bidx[i], "\t", x.b[i], "\t", x.mses[i])
+#    end
+#end
+
+# constructor for when bids are not available
+# simply makes vector of "V$i" where $i are drawn from bidx
 function ELSQCrossvalidationResults{T <: Float}(
     mses :: Vector{T},
-    k    :: Int
-)
-    b    = zeros(T, 1)
-    bidx = zeros(Int, 1)
-    ELSQCrossvalidationResults{T}(mses, b, bidx, k)
+    b    :: Vector{T},
+    bidx :: Vector{Int},
+    k    :: Int,
+    path :: Vector{Int},
+)  
+    bids = convert(Vector{UTF8String}, ["V" * "$i" for i in bidx]) :: Vector{UTF8String}
+    ELSQCrossvalidationResults{eltype(mses)}(mses, b, bidx, k, path, bids)
 end
 
-function Base.display(x::ELSQCrossvalidationResults)
-    println("Exchange Algorithm Crossvalidation Results:")
-    println("Best model size is $k predictors")
-    println("\tPredictor\tValue\tMSE")
-    for i in eachindex(x.bidx)
-        println("\t", x.bidx[i], "\t", x.b[i], "\t", x.mses[i])
-    end
+# function to view an ELSQCrossvalidationResults object
+function Base.show(io::IO, x::ELSQCrossvalidationResults)
+    println(io, "Crossvalidation results:") 
+    println(io, "Minimum MSE ", minimum(x.mses), " occurs at k = $(x.k).")
+    println(io, "Best model β has the following nonzero coefficients:")
+    println(io, DataFrame(Predictor=x.bidx, Name=x.bids, Estimated_β=x.b))
+    return nothing
+end
+
+function Gadfly.plot(x::ELSQCrossvalidationResults)
+    df = DataFrame(ModelSize=x.path, MSE=x.mses)
+    plot(df, x="ModelSize", y="MSE", xintercept=[x.k], Geom.line, Geom.vline(color=colorant"red"), Guide.xlabel("Model size"), Guide.ylabel("MSE"), Guide.title("MSE versus model size"))
 end
 
 function check_finiteness{T <: Float}(x::T)
@@ -135,6 +185,22 @@ end
 function errorcheck{T <: Float}(
     x        :: DenseMatrix{T},
     y        :: DenseVector{T},
+#    k        :: Int,
+    tol      :: T,
+    max_iter :: Int,
+    window   :: Int,
+    p        :: Int = size(x,2)
+)
+#    0 <= k <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(bvec)"))
+    tol >= eps()          || throw(ArgumentError("Global tolerance must exceed machine precision"))
+    max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
+#    0 <= window <= k      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
+    return nothing
+end
+
+function errorcheck{T <: Float}(
+    x        :: BEDFile{T},
+    y        :: SharedVector{T},
 #    k        :: Int,
     tol      :: T,
     max_iter :: Int,

@@ -11,6 +11,8 @@ using PLINK
 using Distances: euclidean, chebyshev
 using StatsBase: sample
 using OpenCL
+using DataFrames
+using Gadfly
 
 export exchange_leastsq!
 export exlstsq

@@ -34,17 +34,15 @@ function one_fold{T <: Float}(
     quiet    :: Bool = true
 )
 
-    # find testing indices
+    # find testing indices and size of test set
     test_idx = folds .== fold
+    test_size = sum(test_idx)
 
     # preallocate vector for output
     myerrors = zeros(T, sum(test_idx))
 
     # train_idx is the vector that indexes the TRAINING set
     train_idx = !test_idx
-
-    # how big is training sample?
-    n = sum(train_idx)
 
     # allocate the arrays for the training set
     x_train = x[train_idx,:]
@@ -54,10 +52,11 @@ function one_fold{T <: Float}(
     v = ELSQVariables(x_train, y_train)
 
     # will return a sparse matrix of betas
-    betas = exlstsq(x_train, y_train, models, v=v, window=window, max_iter=max_iter, tol=tol, quiet=quiet) 
+    betas = exlstsq(x_train, y_train, models=models, v=v, window=window, max_iter=max_iter, tol=tol, quiet=quiet) 
 
     # compute the mean out-of-sample error for the TEST set
-    errors = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ (2*length(test_idx))
+#    errors = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ (2*length(test_idx))
+    errors = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ (2*test_size)
 
     return errors :: Vector{T}
 end
@@ -148,11 +147,11 @@ Arguments:
 
 - `x` is the `n` x `p` design matrix.
 - `y` is the `n`-vector of responses.
-- `models` is an integer vector to specify the the regularization path to compute.
-- `q` is the number of folds to compute.
 
 Optional Arguments:
 
+- `models` is an integer vector to specify the the regularization path to compute.
+- `q` is the number of folds to compute. Defaults to `max(3, min(CPU_CORES, 5))`.
 - `folds` is the `Int` array that indicates which data to hold out for testing. Defaults to `cv_get_folds(sdata(y),q)`.
 - `folds` is the partition of the data. Defaults to a random partition into `q` disjoint sets.
 - `tol` is the convergence tolerance to pass to the path computations. Defaults to `1e-6`.
@@ -160,7 +159,6 @@ Optional Arguments:
 - `quiet` is a `Bool` to activate output. Defaults to `true` (no output).
    *NOTA BENE*: each processor outputs feed to the console without regard to the others,
    so setting `quiet=false` can yield very messy output!
-- `refit` is a `Bool` to indicate whether or not to recompute the best model. Defaults to `true` (refit the coefficients).
 
 Output:
 
@@ -175,16 +173,15 @@ If `refit = true`, then for the best model size `k` `cv_exlstsq` will also retur
 """
 function cv_exlstsq{T <: Float}(
     x        :: DenseMatrix{T},
-    y        :: DenseVector{T},
-    models   :: DenseVector{Int},
-    q        :: Int;
+    y        :: DenseVector{T};
+    models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
+    q        :: Int              = max(3, min(CPU_CORES, 5)),
     pids     :: DenseVector{Int} = procs(),
     folds    :: DenseVector{Int} = cv_get_folds(sdata(y),q),
-    tol      :: T       = convert(T, 1e-6),
-    max_iter :: Int     = 100,
-    window   :: Int     = p,
-    refit    :: Bool    = true,
-    quiet    :: Bool    = true,
+    tol      :: T    = convert(T, 1e-6),
+    max_iter :: Int  = 100,
+    window   :: Int  = maximum(models),
+    quiet    :: Bool = true,
 )
 
 #    1 <= minimum(models) <= maximum(models) <= size(x,2) || throw(ArgumentError("Model sizes must be positive and cannot exceed number of predictors"))
@@ -197,35 +194,30 @@ function cv_exlstsq{T <: Float}(
     # print results
     quiet || print_cv_results(mses, models, k)
 
-    # recompute ideal model
-    if refit
+    # refit ideal model
+    # initialize beta vector
+    v = ELSQVariables(x, y)
 
-        # initialize beta vector
-        v = ELSQVariables(x, y)
+    # first use exchange algorithm to extract model
+    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k)
 
-        # first use exchange algorithm to extract model
-        exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k)
+    # which components of beta are nonzero?
+    # cannot use binary indices here since we need to return Int indices
+    bidx = find(v.b)
 
-        # which components of beta are nonzero?
-        # cannot use binary indices here since we need to return Int indices
-        bidx = find(v.b)
+    # allocate the submatrix of x corresponding to the inferred model
+    x_inferred = x[:,bidx]
 
-        # allocate the submatrix of x corresponding to the inferred model
-        x_inferred = x[:,bidx]
-
-        # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
-        # return it with the vector of MSEs
-        xty = BLAS.gemv('T', one(T), x_inferred, y)
-        xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
-        b = zeros(T, length(bidx))
-        try
-            b = (xtx \ xty) :: Vector{T}
-        catch e
-            warn("caught error: ", e, "\nSetting returned values of b to -Inf")
-            fill!(b, -Inf)
-        end
-        return ELSQCrossvalidationResults{T}(mses, b, bidx, k)
+    # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
+    # return it with the vector of MSEs
+    xty = BLAS.gemv('T', one(T), x_inferred, y)
+    xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
+    b = zeros(T, length(bidx))
+    try
+        b = (xtx \ xty) :: Vector{T}
+    catch e
+        warn("caught error: ", e, "\nSetting returned values of b to -Inf")
+        fill!(b, -Inf)
     end
-
-    return ELSQCrossvalidationResults(mses, k)
+    return ELSQCrossvalidationResults(mses, b, bidx, k, sdata(models))
 end

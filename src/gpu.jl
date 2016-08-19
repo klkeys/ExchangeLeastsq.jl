@@ -40,10 +40,11 @@ function exchange_leastsq!{T <: Float}(
     selectperm!(v.perm, v.b, k, by=abs, rev=true, initialized=true)
 
     # update estimated response
+    update_indices!(v.idx, v.b)
     A_mul_B!(v.xb, x, v.b, v.idx, k, v.mask_n)
 
     # update residuals
-    difference!(v.r, y, xb)
+    difference!(v.r, y, v.xb)
     mask!(v.r, v.mask_n, 0, zero(T))
 
     # save value of RSS before starting algorithm
@@ -51,7 +52,7 @@ function exchange_leastsq!{T <: Float}(
 
     # compute inner products of x and residuals
     # this is basically the negative gradient
-    At_mul_B!(v.df, x, v.r, v.mask_n, w, pids=pids)
+    At_mul_B!(v.df, x, v.r, v.mask_n, w)
 
     # outer loop controls number of total iterations for algorithm run on one r
     for iter = 1:(max_iter)
@@ -73,7 +74,9 @@ function exchange_leastsq!{T <: Float}(
             # the if/else statement below is the same as but faster than
             # > dotprods = get!(inner, l, BLAS.gemv('T', one(T), X, tempn))
             if !haskey(v.inner, l)
-                v.inner[l] = At_mul_B(x, v.tempn, v.mask_n, w, pids=pids) 
+#                v.inner[l] = At_mul_B(x, v.tempn, w, mask_n=v.mask_n) 
+                At_mul_B!(v.tempp, x, v.tempn, v.mask_n, w)
+                v.inner[l] = copy(v.tempp) 
             end
             copy!(v.dotprods, v.inner[l])
 
@@ -111,7 +114,9 @@ function exchange_leastsq!{T <: Float}(
             # compare in performance to
             # > tempp = get!(inner, m, BLAS.gemv('T', one(T), X, tempn2))
             if !haskey(v.inner, m)
-                v.inner[m] = At_mul_B(x, v.tempn2, v.mask_n, w, pids=pids) 
+#                v.inner[m] = At_mul_B(x, v.tempn2, w, mask_n=v.mask_n) 
+                At_mul_B!(v.tempp, x, v.tempn2, v.mask_n, w)
+                v.inner[m] = copy(v.tempp)
             end
             copy!(v.tempp, v.inner[m])
 
@@ -162,11 +167,11 @@ end # end exchange_leastsq!
 function exlstsq{T <: Float}(
     x        :: BEDFile{T},
     y        :: SharedVector{T},
-    models   :: DenseVector{Int},
     kernfile :: ASCIIString;
+    models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
     pids     :: DenseVector{Int} = procs(x), 
     v        :: ELSQVariables{T} = ELSQVariables(x, y), 
-    w        :: PlinkGPUVariables{T} = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
+    w        :: PlinkGPUVariables{T} = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n),
     window   :: Int  = maximum(models),
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
@@ -184,8 +189,8 @@ function exlstsq{T <: Float}(
 
     # loop through models
     for i in models
-        exchange_leastsq!(v, x, y, kernfile, w, i, window=i, max_iter=max_iter, tol=tol, quiet=quiet, n=n, p=p, pids=pids)
-        betas[:,i] = sparse(v.b)
+        exchange_leastsq!(v, x, y, kernfile, i, w,  window=min(i,window), max_iter=max_iter, tol=tol, quiet=quiet, n=n, p=p, pids=pids)
+        betas[:,i] = sparse(sdata(v.b))
     end
 
     # return matrix of betas
@@ -211,7 +216,9 @@ function one_fold{T <: Float}(
 )
 
     # find testing indices
+    # how big is training sample?
     test_idx = folds .== fold
+    test_size = sum(test_idx)
 
     # preallocate vector for output
     myerrors = zeros(T, sum(test_idx))
@@ -220,29 +227,26 @@ function one_fold{T <: Float}(
     train_idx = convert(Vector{Int}, !test_idx)
     test_idx  = convert(Vector{Int}, test_idx)
 
-    # how big is training sample?
-    n = sum(train_idx)
 
     # preallocate temporary variables
     v = ELSQVariables(x, y, train_idx)
     w = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
 
     # will return a sparse matrix of betas
-    betas = exlstsq(x, y, models, v=v, w=w, window=window, max_iter=max_iter, tol=tol, quiet=quiet) 
+    betas = exlstsq(x, y, kernfile, models=models, v=v, w=w, window=window, max_iter=max_iter, tol=tol, quiet=quiet) 
 
     # compute the mean out-of-sample error for the TEST set
-    mses = zeros(T, sum(test_idx))
-    idx  = falses(size(x,2))
+    mses = zeros(T, length(models))
 
     for i in eachindex(models) 
         # set b 
         copy!(v.b, sub(betas, :, i)) 
 
         # update indices of current b
-        update_indices!(idx, v.b)
+        update_indices!(v.idx, v.b)
 
         # compute estimated response with current b
-        A_mul_B!(v.xb, x, v.b, models[i], test_idx)
+        A_mul_B!(v.xb, x, v.b, v.idx, models[i], test_idx)
 
         # compute residuals
         difference!(v.r, y, v.xb)
@@ -256,14 +260,14 @@ function one_fold{T <: Float}(
 end
 
 """
-    pfold(x, y, path, folds, nfolds) -> Vector
+    pfold(x, y, path, folds, q) -> Vector
 
 This function is the parallel execution kernel in `cv_exlstsq`. It is not meant to be called outside of `cv_exlstsq`.
-It will distribute `nfolds` crossvalidation folds across the processes supplied by the optional argument `pids` and call `one_fold` for each fold.
+It will distribute `q` crossvalidation folds across the processes supplied by the optional argument `pids` and call `one_fold` for each fold.
 Each fold will compute a regularization path `1:path`.
 `pfold` collects the vectors of MSEs returned by calling `one_fold` for each process, reduces them, and returns their average across all folds.
 """
-function pfold{T <: Float}(
+function pfold(
     T        :: Type,
     xfile    :: ASCIIString,
     xtfile   :: ASCIIString,
@@ -271,15 +275,16 @@ function pfold{T <: Float}(
     yfile    :: ASCIIString,
     meanfile :: ASCIIString,
     precfile :: ASCIIString,
-    path     :: DenseVector{Int},
+    models   :: DenseVector{Int},
     kernfile :: ASCIIString,
     folds    :: DenseVector{Int},
     q        :: Int;
     pids     :: DenseVector{Int} = procs(),
-    tol      :: T    = convert(T, 1e-6),
-    max_iter :: Int  = 100,
-    window   :: Int  = 20, 
-    quiet    :: Bool = true,
+    tol      :: Float = convert(T, 1e-6),
+    max_iter :: Int   = 100,
+    window   :: Int   = 20, 
+    quiet    :: Bool  = true,
+    header   :: Bool  = false,
 )
     # how many CPU processes can pfold use?
     np = length(pids)
@@ -293,7 +298,7 @@ function pfold{T <: Float}(
     nextidx() = (idx=i; i+=1; idx)
 
     # preallocate cell array for results
-    results = cell(nfolds)
+    results = cell(q)
 
     # master process will distribute tasks to workers
     # master synchronizes results at end before returning
@@ -313,7 +318,7 @@ function pfold{T <: Float}(
                         current_fold = nextidx()
 
                         # if current fold exceeds total number of folds then exit loop
-                        current_fold > nfolds && break
+                        current_fold > q && break
 
                         # report distribution of fold to worker and device
                         quiet || print_with_color(:blue, "Computing fold $current_fold on worker $worker.\n\n")
@@ -321,9 +326,10 @@ function pfold{T <: Float}(
                         # launch job on worker
                         # worker loads data from file paths and then computes the errors in one fold
                         results[current_fold] = remotecall_fetch(worker) do
+                            pids = [worker]
                             x = BEDFile(T, xfile, xtfile, x2file, meanfile, precfile, pids=pids, header=header)
                             y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids)
-                            one_fold(x, y, models, kernfile, folds, current_fold, max_iter=max_iter, window=window, tol=tol, quiet=quiet, pids=pids)
+                            one_fold(x, y, models, kernfile, folds, current_fold, max_iter=max_iter, window=window, tol=tol, quiet=quiet)
                         end # end remotecall_fetch()
                     end # end while
                 end # end @async
@@ -332,7 +338,7 @@ function pfold{T <: Float}(
     end # end @sync
 
     # return reduction (row-wise sum) over results
-    return (reduce(+, results[1], results) ./ nfolds) :: Vector{T}
+    return (reduce(+, results[1], results) ./ q) :: Vector{T}
 end
 
 
@@ -342,7 +348,7 @@ end
 
 Perofrm `q`-fold crossvalidation for the best model size in the exchange algorithm for a `BEDFile` object `x`, response vector `y`, and model sizes specified in `models`. 
 """
-function cv_exlstsq{T <: Float}(
+function cv_exlstsq(
     T        :: Type,
     xfile    :: ASCIIString,
     xtfile   :: ASCIIString,
@@ -350,23 +356,32 @@ function cv_exlstsq{T <: Float}(
     yfile    :: ASCIIString,
     meanfile :: ASCIIString,
     precfile :: ASCIIString,
-    models   :: DenseVector{Int},
-    kernfile :: ASCIIString,
-    folds    :: DenseVector{Int},
-    q        :: Int;
+    kernfile :: ASCIIString;
+    q        :: Int = max(3, min(CPU_CORES, 5)),
+    models   :: DenseVector{Int} = begin
+           # find p from the corresponding BIM file, then make path 
+            bimfile = xfile[1:(endof(xfile)-3)] * "bim"
+            p       = countlines(bimfile)
+            collect(1:min(20,p))
+            end,
+    folds    :: DenseVector{Int} = begin
+           # find n from the corresponding FAM file, then make folds
+            famfile = xfile[1:(endof(xfile)-3)] * "fam"
+            n       = countlines(famfile)
+            cv_get_folds(n, q)
+            end,
     pids     :: DenseVector{Int} = procs(),
-    folds    :: DenseVector{Int} = cv_get_folds(sdata(y),q),
-    tol      :: T    = convert(T, 1e-6),
-    max_iter :: Int  = 100,
-    window   :: Int  = p,
-    refit    :: Bool = true,
-    quiet    :: Bool = true,
+    tol      :: Float = convert(T, 1e-6),
+    max_iter :: Int   = 100,
+    window   :: Int   = 20,
+    wg_size  :: Int   = 512,
+    quiet    :: Bool  = true,
+    header   :: Bool  = false,
 )
 
 #    1 <= minimum(models) <= maximum(models) <= size(x,2) || throw(ArgumentError("Model sizes must be positive and cannot exceed number of predictors"))
 
-#    mses = pfold(x, y, models, folds, q, pids=pids, tol=tol, max_iter=max_iter, quiet=quiet, window=window)
-    mses = pfold(T, xfile, xtfile, x2file, yfile, meanfile, precfile, path, kernfile, folds, q, max_iter=max_iter, max_step=max_step, quiet=quiet, devindices=devindices, pids=pids, header=header)
+    mses = pfold(T, xfile, xtfile, x2file, yfile, meanfile, precfile, models, kernfile, folds, q, max_iter=max_iter, quiet=quiet, pids=pids, header=header, window=window)
 
     # what is the best model size?
     k = convert(Int, floor(mean(models[mses .== minimum(mses)])))
@@ -375,37 +390,193 @@ function cv_exlstsq{T <: Float}(
     quiet || print_cv_results(mses, models, k)
 
     # recompute ideal model
-    if refit
+    # initialize all variables 
+    x = BEDFile(T, xfile, xtfile, x2file, meanfile, precfile, pids=pids, header=header)
+    y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
+    v = ELSQVariables(x, y, ones(Int, length(y)))
+    w = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
 
-        # initialize all variables 
-        x = BEDFile(T, xfile, xtfile, x2file, meanfile, precfile, pids=pids, header=header)
-        y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids)
-        v = ELSQVariables(x, y, ones(Int, length(y)))
-        w = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
+    # first use exchange algorithm to extract model
+    exchange_leastsq!(v, x, y, kernfile, k, w, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
 
-        # first use exchange algorithm to extract model
-        exchange_leastsq!(v, x, y, kernfile, k, w, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
+    # which components of beta are nonzero?
+    inferred_model = v.b .!= zero(T)
+    bidx = find(inferred_model)
+    
+    # allocate the submatrix of x corresponding to the inferred model
+    x_inferred = zeros(T, x.geno.n, sum(inferred_model))
+    decompress_genotypes!(x_inferred, x, inferred_model) 
 
-        # which components of beta are nonzero?
-        # cannot use binary indices here since we need to return Int indices
-        bidx = find(v.b)
-
-        # allocate the submatrix of x corresponding to the inferred model
-        x_inferred = x[:,bidx]
-
-        # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
-        # return it with the vector of MSEs
-        xty = BLAS.gemv('T', one(T), x_inferred, y)
-        xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
-        b = zeros(T, length(bidx))
-        try
-            b = (xtx \ xty) :: Vector{T}
-        catch e
-            warn("caught error: ", e, "\nSetting returned values of b to -Inf")
-            fill!(b, -Inf)
-        end
-        return ELSQCrossvalidationResults{T}(mses, b, bidx, k)
+    # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
+    # return it with the vector of MSEs
+    xty = BLAS.gemv('T', one(T), x_inferred, y)
+    xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
+    b = zeros(T, length(bidx))
+    try
+        b = (xtx \ xty) :: Vector{T}
+    catch e
+        warn("caught error: ", e, "\nSetting returned values of b to -Inf")
+        fill!(b, -Inf)
     end
 
-    return ELSQCrossvalidationResults(mses, k)
+    bids = prednames(x)[bidx]
+    return ELSQCrossvalidationResults{T}(mses, b, bidx, k, sdata(models), bids)
 end
+
+# default type for cv_exlstsq is Float64
+cv_exlstsq(xfile::ASCIIString, xtfile::ASCIIString, x2file::ASCIIString, yfile::ASCIIString, meanfile::ASCIIString, precfile::ASCIIString, kernfile::ASCIIString; q::Int = max(3, min(CPU_CORES, 5)), models::DenseVector{Int} = begin bimfile = xfile[1:(endof(xfile)-3)] * "bim"; p = countlines(bimfile); collect(1:min(20,p)) end, folds::DenseVector{Int} = begin famfile = xfile[1:(endof(xfile)-3)] * "fam"; n = countlines(famfile); cv_get_folds(n, q) end, pids::DenseVector{Int} = procs(), tol::Float64 = 1e-6, max_iter::Int  = 100, window::Int  = 20, quiet::Bool = true, header::Bool = false,
+) = cv_exlstsq(Float64, xfile, xtfile, x2file, yfile, meanfile, precfile, kernfile, folds=folds, q=q, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
+
+
+function pfold(
+    T          :: Type,
+    xfile      :: ASCIIString,
+    x2file     :: ASCIIString,
+    yfile      :: ASCIIString,
+    models     :: DenseVector{Int},
+    kernfile   :: ASCIIString,
+    folds      :: DenseVector{Int},
+    q          :: Int;
+    pids       :: DenseVector{Int} = procs(),
+    max_iter   :: Int  = 100,
+    quiet      :: Bool = true,
+    header     :: Bool = false
+)
+
+    # ensure correct type
+    T <: Float || throw(ArgumentError("Argument T must be either Float32 or Float64"))
+
+    # how many CPU processes can pfold use?
+    np = length(pids)
+
+    # report on CPU processes
+    quiet || println("pfold: np = ", np)
+    quiet || println("pids = ", pids)
+
+    # set up function to share state (indices of folds)
+    i = 1
+    nextidx() = (idx=i; i+=1; idx)
+
+    # preallocate cell array for results
+    results = cell(q)
+
+    # master process will distribute tasks to workers
+    # master synchronizes results at end before returning
+    @sync begin
+
+        # loop over all workers
+        for worker in pids
+
+            # exclude process that launched pfold, unless only one process is available
+            if worker != myid() || np == 1
+
+                # asynchronously distribute tasks
+                @async begin
+                    while true
+
+                        # grab next fold
+                        current_fold = nextidx()
+
+                        # if current fold exceeds total number of folds then exit loop
+                        current_fold > q && break
+
+                        # report distribution of fold to worker
+                        quiet || print_with_color(:blue, "Computing fold $current_fold on worker $worker.\n\n")
+
+                        # launch job on worker
+                        # worker loads data from file paths and then computes the errors in one fold
+                        results[current_fold] = remotecall_fetch(worker) do
+                                pids = [worker]
+                                x = BEDFile(T, xfile, x2file, pids=pids, header=header)
+                                y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids)
+                                one_fold(x, y, models, kernfile, folds, current_fold, max_iter=max_iter, window=window, quiet=quiet, pids=pids)
+                        end # end remotecall_fetch()
+                    end # end while
+                end # end @async
+            end # end if
+        end # end for
+    end # end @sync
+
+    # return reduction (row-wise sum) over results
+    return (reduce(+, results[1], results) ./ q) :: Vector{T}
+end
+
+
+function cv_exlstsq(
+    T        :: Type,
+    xfile    :: ASCIIString,
+    x2file   :: ASCIIString,
+    yfile    :: ASCIIString,
+    kernfile :: ASCIIString;
+    q        :: Int = max(3, min(CPU_CORES, 5)),
+    models   :: DenseVector{Int} = begin
+           # find p from the corresponding BIM file, then make path 
+            bimfile = xfile[1:(endof(xfile)-3)] * "bim"
+            p       = countlines(bimfile)
+            collect(1:min(20,p))
+            end,
+    folds    :: DenseVector{Int} = begin
+           # find n from the corresponding FAM file, then make folds
+            famfile = xfile[1:(endof(xfile)-3)] * "fam"
+            n       = countlines(famfile)
+            cv_get_folds(n, q)
+            end,
+    pids     :: DenseVector{Int} = procs(),
+    tol      :: Float = convert(T, 1e-4),
+    max_iter :: Int   = 100,
+    wg_size  :: Int   = 512,
+    quiet    :: Bool  = true,
+    header   :: Bool  = false
+)
+    # enforce type
+    T <: Float || throw(ArgumentError("Argument T must be either Float32 or Float64"))
+
+    # how many elements are in the path?
+    num_models = length(models)
+
+    # want to compute a path for each fold
+    # the folds are computed asynchronously
+    # only use the worker processes
+    mses = pfold(T, xfile, x2file, yfile, models, kernfile, folds, q, max_iter=max_iter, quiet=quiet, pids=pids, header=header, window=window)
+
+    # what is the best model size?
+    k = convert(Int, floor(mean(models[mses .== minimum(mses)])))
+
+    # print results
+    !quiet && print_cv_results(mses, models, k)
+
+    # recompute ideal model
+    # initialize all variables 
+    x = BEDFile(T, xfile, x2file, pids=pids, header=header)
+    y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
+    v = ELSQVariables(x, y, ones(Int, length(y)))
+    w = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
+
+    # first use exchange algorithm to extract model
+    exchange_leastsq!(v, x, y, kernfile, k, w, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
+
+    # which components of beta are nonzero?
+    inferred_model = output.beta .!= zero(T)
+    bidx = find(inferred_model)
+
+    # allocate the submatrix of x corresponding to the inferred model
+    x_inferred = zeros(T, x.geno.n, sum(inferred_model))
+    decompress_genotypes!(x_inferred, x, inferred_model)
+
+    # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
+    xty = BLAS.gemv('T', one(T), x_inferred, y)
+    xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
+    b   = zeros(T, length(bidx))
+    try
+        b = (xtx \ xty) :: Vector{T}
+    catch e
+        warn("in refit, caught error: ", e, "\nSetting returned values of b to -Inf")
+        fill!(b, -Inf)
+    end
+
+    bids = prednames(x)[bidx]
+    return ELSQCrossvalidationResults{T}(mses, sdata(models), b, bidx, k)
+end
+
+# default type for cv_iht is Float64
+cv_exlstsq(xfile::ASCIIString, x2file::ASCIIString, yfile::ASCIIString, kernfile::ASCIIString; q::Int = max(3, min(CPU_CORES, 5)), models::DenseVector{Int} = begin bimfile=xfile[1:(endof(xfile)-3)] * "bim"; p=countlines(bimfile); collect(1:min(20,p)) end, folds::DenseVector{Int} = begin famfile=xfile[1:(endof(xfile)-3)] * "fam"; n=countlines(famfile); cv_get_folds(n, q) end, pids::DenseVector{Int}=procs(), tol::Float64=1e-4, max_iter::Int=100, quiet::Bool=true, header::Bool=false) = cv_iht(Float64, xfile, x2file, yfile, kernfile, models=models, folds=folds, q=q, pids=pids, tol=tol, max_iter=max_iter, quiet=quiet, header=header)
