@@ -11,12 +11,12 @@ type ELSQVariables{T <: Float, V <: DenseVector}
     tempn    :: V 
     tempn2   :: V
     xb       :: V
-    perm     :: DenseVector{Int} 
+    perm     :: Vector{Int} 
     inner    :: Dict{Int, Vector{T}}
     mask_n   :: DenseVector{Int}
     idx      :: BitArray{1}
 
-    ELSQVariables(b::DenseVector{T}, nrmsq::DenseVector{T}, df::DenseVector{T}, dotprods::DenseVector{T}, tempp::DenseVector{T}, r::DenseVector{T}, tempn::DenseVector{T}, tempn2::DenseVector{T}, xb::DenseVector{T}, perm::DenseVector{Int}, inner::Dict{Int, Vector{T}}, mask_n::DenseVector{Int}, idx::BitArray{1}) = new(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, xb, perm, inner, mask_n, idx)
+    ELSQVariables(b::DenseVector{T}, nrmsq::DenseVector{T}, df::DenseVector{T}, dotprods::DenseVector{T}, tempp::DenseVector{T}, r::DenseVector{T}, tempn::DenseVector{T}, tempn2::DenseVector{T}, xb::DenseVector{T}, perm::Vector{Int}, inner::Dict{Int, Vector{T}}, mask_n::DenseVector{Int}, idx::BitArray{1}) = new(b, nrmsq, df, dotprods, tempp, r, tempn, tempn2, xb, perm, inner, mask_n, idx)
 end
 
 function ELSQVariables{T <: Float}(
@@ -32,7 +32,7 @@ function ELSQVariables{T <: Float}(
     tempn    :: DenseVector{T},
     tempn2   :: DenseVector{T},
     xb       :: DenseVector{T},
-    perm     :: DenseVector{Int}, 
+    perm     :: Vector{Int}, 
     inner    :: Dict{Int, Vector{T}},
     mask_n   :: DenseVector{Int},
     idx      :: BitArray{1}
@@ -221,4 +221,91 @@ function print_cv_results{T <: Float}(errors::DenseVector{T}, path::DenseVector{
         println(path[i], "\t", errors[i])
     end
     println("\nThe lowest MSE is achieved at k = ", k)
+end
+
+# subroutine compares current predictor i against all predictors k+1, k+2, ..., p
+# these predictors are candidates for inclusion in set
+# _exlstsq_innerloop! find best new predictor
+function _exlstsq_innerloop!{T <: Float}(
+    v   :: ELSQVariables{T},
+    k   :: Int, 
+    i   :: Int,
+    p   :: Int,
+    tol :: T
+)
+    l     = v.perm[i] :: Int
+    betal = v.b[l]    :: T
+
+    # save values to determine best estimate for current predictor
+    b   = v.nrmsq[l] :: T
+    a   = (v.df[l] + betal*b) :: T
+    adb = a / b :: T
+    r   = i
+
+    # inner loop compares current predictor j against all remaining predictors j+1,...,p
+    for j = (k+1):p
+        idx = v.perm[j] :: Int
+        c   = (v.df[idx] + betal*v.dotprods[idx]) :: T
+        d   = v.nrmsq[idx] :: T
+
+        # if current inactive predictor beats current active predictor,
+        # then save info for swapping
+        if c*c/d > a*adb + tol
+            a   = c
+            b   = d
+            r   = j
+            adb = a / b
+        end
+    end # end inner loop over remaining predictor set
+
+    return a, b, r, adb
+end
+
+# subroutine to swap predictors
+# in exchange_leastsq!, will swap best predictor with current predictor
+function _swap_predictors!{T <: Float}(
+    v   :: ELSQVariables{T},
+    i   :: Int,
+    r   :: Int,
+    m   :: Int,
+    adb :: T
+)
+    # save ith best predictor 
+    j = v.perm[i]
+
+    # replace index of ith best with new best predictor
+    v.perm[i] = v.perm[r]
+
+    # replace new best predictor with ith best
+    # at this point, swap of indices is complete
+    v.perm[r] = j
+
+    # replace coefficient of mth best predictor with a / b 
+    v.b[m] = adb
+
+    # if rth and ith predictors coincide,
+    # then set ith best predictor coefficient to zero 
+    if r != i
+        v.b[j] = zero(T)
+    end
+    return nothing
+end
+
+"""
+    axpymbz!(y,a,x,b,z[, p=length(y)])
+
+The silly name is based on BLAS `axpy()` (A*X Plus Y), except that this function performs *A**X* *P*lus *Y* *M*inus *B**Z*.
+The idea behind `axpymz!()` is to perform the computation in one pass over the arrays. The output is the same as `y = y + a*x - b*z`.
+"""
+function axpymbz!{T <: Float}(
+    y :: DenseVector{T},
+    a :: T,
+    x :: DenseVector{T},
+    b :: T,
+    z :: DenseVector{T};
+)
+    @inbounds @simd for i in eachindex(y) 
+        y[i] = y[i] + a*x[i] - b*z[i]
+    end
+    return nothing
 end

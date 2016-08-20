@@ -14,14 +14,8 @@ using OpenCL
 using DataFrames
 using Gadfly
 
-export exchange_leastsq!
 export exlstsq
 export cv_exlstsq
-#export test_exchangeleastsq
-#export test_exleastsq
-#export test_cv_exlstsq
-#export compare_exlstsq
-#export test_exchangeleastsq_plink
 
 "An alias for the `OpenCL` module name"
 const cl = OpenCL

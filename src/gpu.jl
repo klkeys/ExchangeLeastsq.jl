@@ -18,23 +18,8 @@ function exchange_leastsq!{T <: Float}(
     tol      :: T    = convert(T, 1e-6),
     quiet    :: Bool = false
 )
-
-    # declare algorithm variables
-    i       = 0               # used for iterations
-    iter    = 0               # used for outermost loop
-    j       = 0               # used for iterations
-    r       = 0               # used for indexing
-    l       = 0               # used for indexing
-    m       = 0               # used for indexing
-    idx     = 0               # used for indexing
-    a       = zero(T)
-    b       = zero(T)
-    adb     = zero(T)         # = a / b
-    c       = zero(T)
-    d       = zero(T)
-    betal   = zero(T)         # store lth component of bvec
-    rss     = zero(T)         # residual sum of squares || Y - XB ||^2
-    old_rss = oftype(tol,Inf) # previous residual sum of squares
+    # initial value for previous residual sum of squares
+    old_rss = oftype(tol,Inf) 
 
     # obtain top r components of bvec in magnitude
     selectperm!(v.perm, v.b, k, by=abs, rev=true, initialized=true)
@@ -80,27 +65,32 @@ function exchange_leastsq!{T <: Float}(
             end
             copy!(v.dotprods, v.inner[l])
 
-            # save values to determine best estimate for current predictor
-            b   = v.nrmsq[l]
-            a   = v.df[l] + betal*b
-            adb = a / b
-            r   = i
+#            # save values to determine best estimate for current predictor
+#            b   = v.nrmsq[l]
+#            a   = v.df[l] + betal*b
+#            adb = a / b
+#            r   = i
+#
+#            # inner loop compares current predictor j against all remaining predictors j+1,...,p
+#            for j = (k+1):p
+#                idx = v.perm[j]
+#                c   = v.df[idx] + betal*v.dotprods[idx]
+#                d   = v.nrmsq[idx]
+#
+#                # if current inactive predictor beats current active predictor,
+#                # then save info for swapping
+#                if c*c/d > a*adb + tol
+#                    a   = c
+#                    b   = d
+#                    r   = j
+#                    adb = a / b
+#                end
+#            end # end inner loop over remaining predictor set
 
-            # inner loop compares current predictor j against all remaining predictors j+1,...,p
-            for j = (k+1):p
-                idx = v.perm[j]
-                c   = v.df[idx] + betal*v.dotprods[idx]
-                d   = v.nrmsq[idx]
-
-                # if current inactive predictor beats current active predictor,
-                # then save info for swapping
-                if c*c/d > a*adb + tol
-                    a   = c
-                    b   = d
-                    r   = j
-                    adb = a / b
-                end
-            end # end inner loop over remaining predictor set
+            # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
+            # these predictors are candidates for inclusion in set
+            # _exlstsq_innerloop! find best new predictor r
+            a, b, r, adb = _exlstsq_innerloop!(v, k, i, p, tol)
 
             # now want to update residuals with current best predictor
             m = v.perm[r]
@@ -123,14 +113,15 @@ function exchange_leastsq!{T <: Float}(
             # also update df
             axpymbz!(v.df, betal, v.dotprods, adb, v.tempp)
 
-            # now swap best predictor with current predictor
-            j         = v.perm[i]
-            v.perm[i] = v.perm[r]
-            v.perm[r] = j
-            v.b[m]    = adb
-            if r != i
-                v.b[j] = zero(T)
-            end
+#            # now swap best predictor with current predictor
+#            j         = v.perm[i]
+#            v.perm[i] = v.perm[r]
+#            v.perm[r] = j
+#            v.b[m]    = adb
+#            if r != i
+#                v.b[j] = zero(T)
+#            end
+            _swap_predictors!(v, i, r, m, adb)
 
         end # end middle loop over predictors
 
