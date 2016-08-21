@@ -105,28 +105,6 @@ function exchange_leastsq!{T <: Float}(
             end
             copy!(v.dotprods, v.inner[l])
 
-#            # save values to determine best estimate for current predictor
-#            b   = v.nrmsq[l]
-#            a   = v.df[l] + betal*b
-#            adb = a / b
-#            r   = i
-#
-#            # inner loop compares current predictor j against all remaining predictors j+1,...,p
-#            for j = (k+1):p
-#                idx = v.perm[j]
-#                c   = v.df[idx] + betal*v.dotprods[idx]
-#                d   = v.nrmsq[idx]
-#
-#                # if current inactive predictor beats current active predictor,
-#                # then save info for swapping
-#                if c*c/d > a*adb + tol
-#                    a   = c
-#                    b   = d
-#                    r   = j
-#                    adb = a / b
-#                end
-#            end # end inner loop over remaining predictor set
-
             # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
             # these predictors are candidates for inclusion in set
             # _exlstsq_innerloop! find best new predictor r
@@ -150,13 +128,6 @@ function exchange_leastsq!{T <: Float}(
             axpymbz!(v.df, betal, v.dotprods, adb, v.tempp)
 
             # now swap best predictor with current predictor
-#            j         = v.perm[i]
-#            v.perm[i] = v.perm[r]
-#            v.perm[r] = j
-#            v.b[m]    = adb
-#            if r != i
-#                v.b[j] = zero(T)
-#            end
             _swap_predictors!(v, i, r, m, adb)
 
         end # end middle loop over predictors
@@ -226,7 +197,6 @@ function exlstsq{T <: Float}(
     n,p = size(x)
 
     # error checking
-#    errorcheck(x, y, k, tol, max_iter, window, p)
     errorcheck(x, y, tol, max_iter, window, p)
 
     # initialize sparse matrix to return

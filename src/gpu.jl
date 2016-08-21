@@ -59,33 +59,10 @@ function exchange_leastsq!{T <: Float}(
             # the if/else statement below is the same as but faster than
             # > dotprods = get!(inner, l, BLAS.gemv('T', one(T), X, tempn))
             if !haskey(v.inner, l)
-#                v.inner[l] = At_mul_B(x, v.tempn, w, mask_n=v.mask_n) 
                 At_mul_B!(v.tempp, x, v.tempn, v.mask_n, w)
                 v.inner[l] = copy(v.tempp) 
             end
             copy!(v.dotprods, v.inner[l])
-
-#            # save values to determine best estimate for current predictor
-#            b   = v.nrmsq[l]
-#            a   = v.df[l] + betal*b
-#            adb = a / b
-#            r   = i
-#
-#            # inner loop compares current predictor j against all remaining predictors j+1,...,p
-#            for j = (k+1):p
-#                idx = v.perm[j]
-#                c   = v.df[idx] + betal*v.dotprods[idx]
-#                d   = v.nrmsq[idx]
-#
-#                # if current inactive predictor beats current active predictor,
-#                # then save info for swapping
-#                if c*c/d > a*adb + tol
-#                    a   = c
-#                    b   = d
-#                    r   = j
-#                    adb = a / b
-#                end
-#            end # end inner loop over remaining predictor set
 
             # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
             # these predictors are candidates for inclusion in set
@@ -104,7 +81,6 @@ function exchange_leastsq!{T <: Float}(
             # compare in performance to
             # > tempp = get!(inner, m, BLAS.gemv('T', one(T), X, tempn2))
             if !haskey(v.inner, m)
-#                v.inner[m] = At_mul_B(x, v.tempn2, w, mask_n=v.mask_n) 
                 At_mul_B!(v.tempp, x, v.tempn2, v.mask_n, w)
                 v.inner[m] = copy(v.tempp)
             end
@@ -113,14 +89,7 @@ function exchange_leastsq!{T <: Float}(
             # also update df
             axpymbz!(v.df, betal, v.dotprods, adb, v.tempp)
 
-#            # now swap best predictor with current predictor
-#            j         = v.perm[i]
-#            v.perm[i] = v.perm[r]
-#            v.perm[r] = j
-#            v.b[m]    = adb
-#            if r != i
-#                v.b[j] = zero(T)
-#            end
+            # now swap best predictor with current predictor
             _swap_predictors!(v, i, r, m, adb)
 
         end # end middle loop over predictors
