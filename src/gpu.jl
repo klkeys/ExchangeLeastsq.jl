@@ -351,13 +351,13 @@ function cv_exlstsq(
 
     # recompute ideal model
     # initialize all variables 
-    x = BEDFile(T, xfile, xtfile, x2file, meanfile, precfile, pids=pids, header=header)
+    # not worth effort to recompute only one model size with GPU, so use CPU instead
+    x = BEDFile(T, xfile, x2file, pids=pids, header=header)
     y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
     v = ELSQVariables(x, y, ones(Int, length(y)))
-    w = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
 
-    # first use exchange algorithm to extract model
-    exchange_leastsq!(v, x, y, kernfile, k, w, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
+    # use exchange algorithm to extract model
+    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
 
     # which components of beta are nonzero?
     inferred_model = v.b .!= zero(T)
@@ -507,13 +507,13 @@ function cv_exlstsq(
 
     # recompute ideal model
     # initialize all variables 
+    # not worth effort to recompute only one model size with GPU, so use CPU instead
     x = BEDFile(T, xfile, x2file, pids=pids, header=header)
     y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
     v = ELSQVariables(x, y, ones(Int, length(y)))
-    w = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
 
-    # first use exchange algorithm to extract model
-    exchange_leastsq!(v, x, y, kernfile, k, w, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
+    # use exchange algorithm to extract model
+    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
 
     # which components of beta are nonzero?
     inferred_model = output.beta .!= zero(T)
