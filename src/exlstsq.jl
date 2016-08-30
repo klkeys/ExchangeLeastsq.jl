@@ -23,8 +23,6 @@ end
 
 
 
-
-
 """
     exchange_leastsq!(v, x, y, k) -> b
 
@@ -93,17 +91,19 @@ function exchange_leastsq!{T <: Float}(
             # save information for current value of i
             l     = v.perm[i]
             betal = v.b[l]
-            update_col!(v.tempn, x, l)  # tempn now holds X[:,l]
+            #update_col!(v.tempn, x, l)  # tempn now holds X[:,l]
+            copy!(v.tempn, sub(x, :, l))
 
             # if necessary, compute inner products of current predictor against all other predictors
             # store this information in Dict inner
             # for current index, hold dot products in memory for duration of inner loop
             # the if/else statement below is the same as but faster than
             # > dotprods = get!(inner, l, BLAS.gemv('T', one(T), X, tempn))
-            if !haskey(v.inner, l)
-                v.inner[l] = BLAS.gemv('T', one(T), x, v.tempn)
-            end
-            copy!(v.dotprods, v.inner[l])
+#            if !haskey(v.inner, l)
+#                v.inner[l] = BLAS.gemv('T', one(T), x, v.tempn)
+#            end
+#            copy!(v.dotprods, v.inner[l])
+            get_inner_product!(v.dotprods, v.tempn, v, x, l)
 
             # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
             # these predictors are candidates for inclusion in set
@@ -111,18 +111,17 @@ function exchange_leastsq!{T <: Float}(
             a, b, r, adb = _exlstsq_innerloop!(v, k, i, p, tol)
 
             # now want to update residuals with current best predictor
-            m = v.perm[r]
-            update_col!(v.tempn2, x, m) # tempn2 now holds X[:,m]
-            axpymbz!(v.r, betal, v.tempn, adb, v.tempn2)
+            m = update_current_best_predictor!(v, x, betal, adb, r)
 
             # if necessary, compute inner product of current predictor against all other predictors
             # save in our Dict for future reference
             # compare in performance to
             # > tempp = get!(inner, m, BLAS.gemv('T', one(T), X, tempn2))
-            if !haskey(v.inner, m)
-                v.inner[m] = BLAS.gemv('T', one(T), x, v.tempn2)
-            end
-            copy!(v.tempp, v.inner[m])
+#            if !haskey(v.inner, m)
+#                v.inner[m] = BLAS.gemv('T', one(T), x, v.tempn2)
+#            end
+#            copy!(v.tempp, v.inner[m])
+            get_inner_product!(v.tempp, v.tempn2, v, x, m)
 
             # also update df
             axpymbz!(v.df, betal, v.dotprods, adb, v.tempp)
@@ -208,7 +207,7 @@ function exlstsq{T <: Float}(
         # monitor output
         quiet || println("Testing model size $i.")
         exchange_leastsq!(v, x, y, i, window=min(window,i), max_iter=max_iter, tol=tol, quiet=quiet, n=n, p=p)
-        betas[:,i] = sparse(v.b)
+        betas[:,i] = sparse(sdata(v.b))
     end
 
     # return matrix of betas

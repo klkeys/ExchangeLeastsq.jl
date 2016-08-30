@@ -165,9 +165,6 @@ Output:
 An `ELSQResults` container object with the following fields:
 - `mses` is a vector of averaged MSEs across all folds, with one component per model computed.
 - `k` is the best crossvalidated model size
-
-If `refit = true`, then for the best model size `k` `cv_exlstsq` will also return
-
 - `b`, a vector of `k` components with the computed effect sizes
 - `bidx`, an `Int` vector of `k_star` components indicating the support of `b` at `k_star`.
 """
@@ -194,30 +191,9 @@ function cv_exlstsq{T <: Float}(
     # print results
     quiet || print_cv_results(mses, models, k)
 
-    # refit ideal model
-    # initialize beta vector
-    v = ELSQVariables(x, y)
+    # refit coefficients
+    b, bidx = refit_exlstsq(x, y, k, models=models, tol=tol, max_iter=max_iter, window=window, quiet=quiet)
 
-    # first use exchange algorithm to extract model
-    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k)
-
-    # which components of beta are nonzero?
-    # cannot use binary indices here since we need to return Int indices
-    bidx = find(v.b)
-
-    # allocate the submatrix of x corresponding to the inferred model
-    x_inferred = x[:,bidx]
-
-    # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
-    # return it with the vector of MSEs
-    xty = BLAS.gemv('T', one(T), x_inferred, y)
-    xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
-    b = zeros(T, length(bidx))
-    try
-        b = (xtx \ xty) :: Vector{T}
-    catch e
-        warn("caught error: ", e, "\nSetting returned values of b to -Inf")
-        fill!(b, -Inf)
-    end
     return ELSQCrossvalidationResults(mses, b, bidx, k, sdata(models))
 end
+

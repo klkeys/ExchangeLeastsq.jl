@@ -6,7 +6,7 @@ _ExchangeLeastsq.jl_ is a module to perform sparse model selection in least squa
 
 From a Julia prompt, type
 
-    Pkg.add("https://bitbucket.org/kevin_keys/exchangeleastsq.jl")
+    Pkg.clone("https://github.com/klkeys/ExchangeLeastsq.jl")
 
 ## Usage
 

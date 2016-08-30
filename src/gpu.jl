@@ -58,11 +58,12 @@ function exchange_leastsq!{T <: Float}(
             # for current index, hold dot products in memory for duration of inner loop
             # the if/else statement below is the same as but faster than
             # > dotprods = get!(inner, l, BLAS.gemv('T', one(T), X, tempn))
-            if !haskey(v.inner, l)
-                At_mul_B!(v.tempp, x, v.tempn, v.mask_n, w)
-                v.inner[l] = copy(v.tempp) 
-            end
-            copy!(v.dotprods, v.inner[l])
+#            if !haskey(v.inner, l)
+#                At_mul_B!(v.tempp, x, v.tempn, v.mask_n, w)
+#                v.inner[l] = copy(v.tempp) 
+#            end
+#            copy!(v.dotprods, v.inner[l])
+            get_inner_product!(v.dotprods, v.tempn, v, x, w, l, pids=pids)
 
             # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
             # these predictors are candidates for inclusion in set
@@ -70,21 +71,18 @@ function exchange_leastsq!{T <: Float}(
             a, b, r, adb = _exlstsq_innerloop!(v, k, i, p, tol)
 
             # now want to update residuals with current best predictor
-            m = v.perm[r]
-            decompress_genotypes!(v.tempn2, x, m) # tempn now holds x[:,m]
-            mask!(v.tempn2, v.mask_n, 0, zero(T))
-            axpymbz!(v.r, betal, v.tempn, adb, v.tempn2)
-            mask!(v.r, v.mask_n, 0, zero(T))
+            m = update_current_best_predictor!(v, x, betal, adb, r)
 
             # if necessary, compute inner product of current predictor against all other predictors
             # save in our Dict for future reference
             # compare in performance to
             # > tempp = get!(inner, m, BLAS.gemv('T', one(T), X, tempn2))
-            if !haskey(v.inner, m)
-                At_mul_B!(v.tempp, x, v.tempn2, v.mask_n, w)
-                v.inner[m] = copy(v.tempp)
-            end
-            copy!(v.tempp, v.inner[m])
+#            if !haskey(v.inner, m)
+#                At_mul_B!(v.tempp, x, v.tempn2, v.mask_n, w)
+#                v.inner[m] = copy(v.tempp)
+#            end
+#            copy!(v.tempp, v.inner[m])
+            get_inner_product!(v.tempp, v.tempn2, v, x, w, m, pids=pids)
 
             # also update df
             axpymbz!(v.df, betal, v.dotprods, adb, v.tempp)
@@ -350,35 +348,10 @@ function cv_exlstsq(
     quiet || print_cv_results(mses, models, k)
 
     # recompute ideal model
-    # initialize all variables 
     # not worth effort to recompute only one model size with GPU, so use CPU instead
-    x = BEDFile(T, xfile, x2file, pids=pids, header=header)
-    y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
-    v = ELSQVariables(x, y, ones(Int, length(y)))
+    b, bidx = refit_exlstsq(T, xfile, xtfile, x2file, yfile, meanfile, precfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
 
-    # use exchange algorithm to extract model
-    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
-
-    # which components of beta are nonzero?
-    inferred_model = v.b .!= zero(T)
-    bidx = find(inferred_model)
-    
-    # allocate the submatrix of x corresponding to the inferred model
-    x_inferred = zeros(T, x.geno.n, sum(inferred_model))
-    decompress_genotypes!(x_inferred, x, inferred_model) 
-
-    # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
-    # return it with the vector of MSEs
-    xty = BLAS.gemv('T', one(T), x_inferred, y)
-    xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
-    b = zeros(T, length(bidx))
-    try
-        b = (xtx \ xty) :: Vector{T}
-    catch e
-        warn("caught error: ", e, "\nSetting returned values of b to -Inf")
-        fill!(b, -Inf)
-    end
-
+    # also extract names of predictors before returning
     bids = prednames(x)[bidx]
     return ELSQCrossvalidationResults{T}(mses, b, bidx, k, sdata(models), bids)
 end
@@ -506,34 +479,10 @@ function cv_exlstsq(
     !quiet && print_cv_results(mses, models, k)
 
     # recompute ideal model
-    # initialize all variables 
     # not worth effort to recompute only one model size with GPU, so use CPU instead
-    x = BEDFile(T, xfile, x2file, pids=pids, header=header)
-    y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
-    v = ELSQVariables(x, y, ones(Int, length(y)))
+    b, bidx = refit_exlstsq(T, xfile, x2file, yfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
 
-    # use exchange algorithm to extract model
-    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k, pids=pids)
-
-    # which components of beta are nonzero?
-    inferred_model = output.beta .!= zero(T)
-    bidx = find(inferred_model)
-
-    # allocate the submatrix of x corresponding to the inferred model
-    x_inferred = zeros(T, x.geno.n, sum(inferred_model))
-    decompress_genotypes!(x_inferred, x, inferred_model)
-
-    # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
-    xty = BLAS.gemv('T', one(T), x_inferred, y)
-    xtx = BLAS.gemm('T', 'N', one(T), x_inferred, x_inferred)
-    b   = zeros(T, length(bidx))
-    try
-        b = (xtx \ xty) :: Vector{T}
-    catch e
-        warn("in refit, caught error: ", e, "\nSetting returned values of b to -Inf")
-        fill!(b, -Inf)
-    end
-
+    # also extract predictor names before returning
     bids = prednames(x)[bidx]
     return ELSQCrossvalidationResults{T}(mses, sdata(models), b, bidx, k)
 end
