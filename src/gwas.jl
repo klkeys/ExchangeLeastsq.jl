@@ -11,14 +11,14 @@ function exchange_leastsq!{T <: Float}(
     pids     :: DenseVector{Int} = procs(x),
     n        :: Int  = length(y),
     p        :: Int  = size(x,2),
-    window   :: Int  = k,
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
     quiet    :: Bool = false
 )
 
     # initial value for previous residual sum of squares
-    old_rss = oftype(tol,Inf) 
+    old_rss = oftype(tol,Inf)
 
     # obtain top r components of bvec in magnitude
     selectperm!(v.perm, v.b, k, by=abs, rev=true, initialized=true)
@@ -55,13 +55,6 @@ function exchange_leastsq!{T <: Float}(
             # if necessary, compute inner products of current predictor against all other predictors
             # store this information in Dict inner
             # for current index, hold dot products in memory for duration of inner loop
-            # the if/else statement below is the same as but faster than
-            # > dotprods = get!(inner, l, BLAS.gemv('T', one(T), X, tempn))
-#            if !haskey(v.inner, l)
-#                At_mul_B!(v.dotprods, x, v.tempn, v.mask_n, pids=pids)
-#                v.inner[l] = copy(v.dotprods) 
-#            end
-#            copy!(v.dotprods, v.inner[l])
             get_inner_product!(v.dotprods, v.tempn, v, x, l, pids=pids)
 
             # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
@@ -74,13 +67,6 @@ function exchange_leastsq!{T <: Float}(
 
             # if necessary, compute inner product of current predictor against all other predictors
             # save in our Dict for future reference
-            # compare in performance to
-            # > tempp = get!(inner, m, BLAS.gemv('T', one(T), X, tempn2))
-#            if !haskey(v.inner, m)
-#                At_mul_B!(v.tempp, x, v.tempn, v.mask_n, pids=pids)
-#                v.inner[m] = copy(v.tempp) 
-#            end
-#            copy!(v.tempp, v.inner[m])
             get_inner_product!(v.tempp, v.tempn2, v, x, m, pids=pids)
 
             # also update df
@@ -97,12 +83,12 @@ function exchange_leastsq!{T <: Float}(
         # test for descent failure
         # if no descent failure, then test for convergence
         # if not converged, then save RSS and check finiteness
-        # if not converged and still finite, then save RSS and continue 
+        # if not converged and still finite, then save RSS and continue
         ascent    = rss > old_rss + tol
         converged = abs(old_rss - rss) / abs(old_rss + 1) < tol
         old_rss = rss
         ascent && print_descent_error(iter, old_rss, rss)
-        converged && return nothing 
+        converged && return nothing
 
         check_finiteness(rss)
 
@@ -117,20 +103,20 @@ end # end exchange_leastsq!
 
 
 """
-    exlstsq(x::BEDFile, y, models) -> ELSQResults
+    exlstsq(x::BEDFile, y) -> ELSQResults
 
-    Execute the exchange algorithm with a `BEDFile` object `x` over a vector `models` of model sizes.
+    Execute the exchange algorithm with a `BEDFile` object `x` and a response vector `y`.
 """
 function exlstsq{T <: Float}(
     x        :: BEDFile{T},
     y        :: SharedVector{T};
-    v        :: ELSQVariables{T} = ELSQVariables(x, y), 
+    v        :: ELSQVariables{T} = ELSQVariables(x, y),
     pids     :: DenseVector{Int} = procs(x),
     models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
-    window   :: Int  = maximum(models),
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
-    quiet    :: Bool = true 
+    quiet    :: Bool = true
 )
     # dimensions of problem
     nmodels = length(models)
@@ -150,7 +136,7 @@ function exlstsq{T <: Float}(
     end
 
     # return matrix of betas
-    return betas 
+    return betas
 end
 
 """
@@ -173,14 +159,11 @@ function one_fold{T <: Float}(
     # find testing indices
     test_idx = folds .== fold
 
-    # preallocate vector for output
-    myerrors = zeros(T, sum(test_idx))
-
     # train_idx is the vector that indexes the TRAINING set
     train_idx = convert(Vector{Int}, !test_idx)
     test_idx  = convert(Vector{Int}, test_idx)
 
-    # how big are samples? 
+    # how big are samples?
     train_size = sum(train_idx)
     test_size  = sum(test_idx)
 
@@ -188,23 +171,24 @@ function one_fold{T <: Float}(
     v = ELSQVariables(x, y, train_idx)
 
     # will return a sparse matrix of betas
-    betas = exlstsq(x, y, models=models, v=v, window=window, max_iter=max_iter, tol=tol, quiet=quiet) 
+    betas = exlstsq(x, y, models=models, v=v, window=window, max_iter=max_iter, tol=tol, quiet=quiet)
 
-    # compute the mean out-of-sample error for the TEST set
+    # preallocate vector for output
     mses = zeros(T, length(models))
 
-    for i in eachindex(models) 
+    # compute the mean out-of-sample error for the TEST set
+    for i in eachindex(models)
 
-        # set b 
-        copy!(v.b, sub(betas, :, i)) 
+        # set β
+        copy!(v.b, sub(betas, :, i))
 
-        # update indices of current b
+        # update indices of current β
         update_indices!(v.idx, v.b)
 
-        # compute estimated response with current b
+        # compute estimated response with current β
         A_mul_B!(v.xb, x, v.b, v.idx, models[i], test_idx)
 
-        # compute residuals
+        # compute residuals and apply bitmask
         difference!(v.r, y, v.xb)
         mask!(v.r, test_idx, 0, zero(T))
 
@@ -237,7 +221,7 @@ function pfold(
     pids     :: DenseVector{Int} = procs(),
     tol      :: Float = convert(T, 1e-6),
     max_iter :: Int   = 100,
-    window   :: Int   = 20, 
+    window   :: Int   = 20,
     quiet    :: Bool  = true,
     header   :: Bool  = false,
 )
@@ -299,9 +283,9 @@ end
 
 
 """
-    cv_exlstsq(x::BEDFile, y, models, q) -> ELSQCrossvalidationResults 
+    cv_exlstsq(x::BEDFile, y, models, q) -> ELSQCrossvalidationResults
 
-Perofrm `q`-fold crossvalidation for the best model size in the exchange algorithm for a `BEDFile` object `x`, response vector `y`, and model sizes specified in `models`. 
+Perofrm `q`-fold crossvalidation for the best model size in the exchange algorithm for a `BEDFile` object `x`, response vector `y`, and model sizes specified in `models`.
 """
 function cv_exlstsq(
     T        :: Type,
@@ -313,7 +297,7 @@ function cv_exlstsq(
     precfile :: ASCIIString;
     q        :: Int = max(3, min(CPU_CORES, 5)),
     models   :: DenseVector{Int} = begin
-           # find p from the corresponding BIM file, then make path 
+           # find p from the corresponding BIM file, then make path
             bimfile = xfile[1:(endof(xfile)-3)] * "bim"
             p       = countlines(bimfile)
             collect(1:min(20,p))
@@ -343,10 +327,9 @@ function cv_exlstsq(
     quiet || print_cv_results(mses, models, k)
 
     # recompute ideal model
-    b, bidx = refit_exlstsq(T, xfile, xtfile, x2file, yfile, meanfile, precfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
+    # also extract names of predictors
+    b, bidx, bids = refit_exlstsq(T, xfile, xtfile, x2file, yfile, meanfile, precfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
 
-    # also extract names of predictors before returning
-    bids = prednames(x)[bidx]
     return ELSQCrossvalidationResults{T}(mses, b, bidx, k, sdata(models), bids)
 end
 
@@ -366,7 +349,7 @@ function pfold(
     pids     :: DenseVector{Int} = procs(),
     tol      :: Float = convert(T, 1e-6),
     max_iter :: Int   = 100,
-    window   :: Int   = 20, 
+    window   :: Int   = 20,
     quiet    :: Bool  = true,
     header   :: Bool  = false,
 )
@@ -427,9 +410,9 @@ end
 
 
 """
-    cv_exlstsq(x::BEDFile, y, models, q) -> ELSQCrossvalidationResults 
+    cv_exlstsq(x::BEDFile, y, models, q) -> ELSQCrossvalidationResults
 
-Perofrm `q`-fold crossvalidation for the best model size in the exchange algorithm for a `BEDFile` object `x`, response vector `y`, and model sizes specified in `models`. 
+Perofrm `q`-fold crossvalidation for the best model size in the exchange algorithm for a `BEDFile` object `x`, response vector `y`, and model sizes specified in `models`.
 """
 function cv_exlstsq(
     T        :: Type,
@@ -438,7 +421,7 @@ function cv_exlstsq(
     yfile    :: ASCIIString;
     q        :: Int = max(3, min(CPU_CORES, 5)),
     models   :: DenseVector{Int} = begin
-           # find p from the corresponding BIM file, then make path 
+           # find p from the corresponding BIM file, then make path
             bimfile = xfile[1:(endof(xfile)-3)] * "bim"
             p       = countlines(bimfile)
             collect(1:min(20,p))
@@ -468,10 +451,8 @@ function cv_exlstsq(
     quiet || print_cv_results(mses, models, k)
 
     # recompute ideal model
-    b, bidx = refit_exlstsq(T, xfile, x2file, yfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
-
-    # also extract predictor names before returning
-    bids = prednames(x)[bidx]
+    # also extract predictor names
+    b, bidx, bids = refit_exlstsq(T, xfile, x2file, yfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
 
     return ELSQCrossvalidationResults{T}(mses, b, bidx, k, sdata(models), bids)
 end

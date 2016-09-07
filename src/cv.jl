@@ -18,8 +18,9 @@ Optional Arguments:
 - `tol` is the convergence tolerance to pass to the path computations. Defaults to `1e-6`.
 - `max_iter` caps the number of permissible iterations in the algorithm. Defaults to `100`.
 - `window` is an `Int` to dictate the dimension of the search window for potentially exchanging predictors.
-   Defaults to `p = size(x,2)` (potentially exchange all predictors). Decreasing this quantity tells the algorithm to search through
-   fewer current active predictors, which can decrease compute time but can also degrade model recovery performance.
+   Defaults to `max(20, min(maximum(models), size(x,2)))` or the greater of `20` and `r`, where `r` is the lesser of the maximum model size and the number of predictors.
+   Decreasing this quantity tells the algorithm to search through fewer current active predictors,
+   which can decrease compute time but can also degrade model recovery performance.
 - `quiet` is a Boolean to activate output. Defaults to `true` (no output).
 """
 function one_fold{T <: Float}(
@@ -30,16 +31,13 @@ function one_fold{T <: Float}(
     fold     :: Int;
     tol      :: T    = convert(T, 1e-6),
     max_iter :: Int  = 100,
-    window   :: Int  = size(x,2),
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     quiet    :: Bool = true
 )
 
     # find testing indices and size of test set
     test_idx = folds .== fold
     test_size = sum(test_idx)
-
-    # preallocate vector for output
-    myerrors = zeros(T, sum(test_idx))
 
     # train_idx is the vector that indexes the TRAINING set
     train_idx = !test_idx
@@ -48,14 +46,10 @@ function one_fold{T <: Float}(
     x_train = x[train_idx,:]
     y_train = y[train_idx]
 
-    # preallocate temporary variables
-    v = ELSQVariables(x_train, y_train)
-
     # will return a sparse matrix of betas
-    betas = exlstsq(x_train, y_train, models=models, v=v, window=window, max_iter=max_iter, tol=tol, quiet=quiet) 
+    betas = exlstsq(x_train, y_train, models=models, window=window, max_iter=max_iter, tol=tol, quiet=quiet)
 
     # compute the mean out-of-sample error for the TEST set
-#    errors = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ (2*length(test_idx))
     errors = vec(sumabs2(broadcast(-, y[test_idx], x[test_idx,:] * betas), 1)) ./ (2*test_size)
 
     return errors :: Vector{T}
@@ -66,8 +60,8 @@ end
 
 This function is the parallel execution kernel in `cv_exlstsq`. It is not meant to be called outside of `cv_exlstsq`.
 It will distribute `nfolds` crossvalidation folds across the processes supplied by the optional argument `pids` and call `one_fold` for each fold.
-Each fold will compute a regularization path `1:path`.
-`pfold` collects the vectors of MSEs returned by calling `one_fold` for each process, reduces them, and returns their average across all folds.
+Each fold will compute a regularization path given by the `Int` vector `models`.
+`pfold` collects the vectors of MSEs from each process, sum-reduces them, and returns their average across all folds.
 """
 function pfold{T <: Float}(
     x        :: DenseMatrix{T},
@@ -78,7 +72,7 @@ function pfold{T <: Float}(
     pids     :: DenseVector{Int} = procs(x),
     tol      :: T    = convert(T, 1e-6),
     max_iter :: Int  = 100,
-    window   :: Int  = size(x,2),
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     quiet    :: Bool = true,
 )
     # how many CPU processes can pfold use?
@@ -136,11 +130,11 @@ end
 
 
 """
-    cv_exlstsq(x, y, models, q) -> ELSQResults 
+    cv_exlstsq(x, y, models, q) -> ELSQResults
 
 This function will perform `q`-fold crossvalidation for the best model size in the exchange algorithm for least squares regression.
 Each path is asynchronously spawned using any available indexed processor.
-The function to compute each path, `one_fold()`, will return a vector of mean out-of-sample errors (MSEs).
+The function to compute each path, `one_fold`, will return a vector of mean out-of-sample errors (MSEs).
 `cv_exlstsq` reduces across the `q` folds yield averaged MSEs for each model size.
 
 Arguments:
@@ -164,9 +158,9 @@ Output:
 
 An `ELSQResults` container object with the following fields:
 - `mses` is a vector of averaged MSEs across all folds, with one component per model computed.
-- `k` is the best crossvalidated model size
-- `b`, a vector of `k` components with the computed effect sizes
-- `bidx`, an `Int` vector of `k_star` components indicating the support of `b` at `k_star`.
+- `k` is the best crossvalidated model size. Here model size refers to the number of nonzero regression coefficients.
+- `b`, a vector of `k` components with the computed effect sizes of the best model β.
+- `bidx`, an `Int` vector of `k` components indicating the support of `b` at `k`.
 """
 function cv_exlstsq{T <: Float}(
     x        :: DenseMatrix{T},
@@ -177,7 +171,7 @@ function cv_exlstsq{T <: Float}(
     folds    :: DenseVector{Int} = cv_get_folds(sdata(y),q),
     tol      :: T    = convert(T, 1e-6),
     max_iter :: Int  = 100,
-    window   :: Int  = maximum(models),
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     quiet    :: Bool = true,
 )
 
@@ -196,4 +190,3 @@ function cv_exlstsq{T <: Float}(
 
     return ELSQCrossvalidationResults(mses, b, bidx, k, sdata(models))
 end
-

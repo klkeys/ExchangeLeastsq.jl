@@ -2,17 +2,13 @@ type ELSQVariables{T <: Float, V <: DenseVector}
     b        :: V
     nrmsq    :: Vector{T}
     df       :: V
-#    dotprods :: Vector{T}
-    dotprods :: V 
-#    tempp    :: Vector{T} 
-    tempp    :: V 
+    dotprods :: V
+    tempp    :: V
     r        :: V
-#    tempn    :: Vector{T} 
-#    tempn2   :: Vector{T}
-    tempn    :: V 
+    tempn    :: V
     tempn2   :: V
     xb       :: V
-    perm     :: Vector{Int} 
+    perm     :: Vector{Int}
     inner    :: Dict{Int, Vector{T}}
     mask_n   :: Vector{Int}
     idx      :: BitArray{1}
@@ -24,16 +20,13 @@ function ELSQVariables{T <: Float}(
     b        :: DenseVector{T},
     nrmsq    :: Vector{T},
     df       :: DenseVector{T},
-    dotprods :: Vector{T},
-#    tempp    :: Vector{T},
+    dotprods :: DenseVector{T},
     tempp    :: DenseVector{T},
     r        :: DenseVector{T},
-#    tempn    :: Vector{T},
-#    tempn2   :: Vector{T},
     tempn    :: DenseVector{T},
     tempn2   :: DenseVector{T},
     xb       :: DenseVector{T},
-    perm     :: Vector{Int}, 
+    perm     :: Vector{Int},
     inner    :: Dict{Int, Vector{T}},
     mask_n   :: Vector{Int},
     idx      :: BitArray{1}
@@ -49,7 +42,7 @@ function ELSQVariables{T <: Float}(
     n,p = size(x)
 
     # form arrays
-    b        = zeros(T, p) 
+    b        = zeros(T, p)
     nrmsq    = vec(sumabs2(x,1)) :: Vector{T}
     df       = zeros(T, p)
     dotprods = zeros(T, p)
@@ -57,14 +50,12 @@ function ELSQVariables{T <: Float}(
     r        = zeros(T, n)
     tempn    = zeros(T, n)
     tempn2   = zeros(T, n)
-    xb       = zeros(T, n) 
+    xb       = zeros(T, n)
     perm     = collect(1:p)
-#    mask_n   = zeros(Int, n)
     mask_n   = ones(Int, n)
     idx      = falses(p)
 
     # form dictionary
-#    inner = Dict{Int, DenseVector{T}}()
     inner = Dict{Int, Vector{T}}()
 
     # return container object
@@ -75,7 +66,6 @@ end
 function ELSQVariables{T <: Float}(
     x :: BEDFile{T},
     y :: SharedVector{T},
-#    z :: DenseVector{Int}
 )
     # dimensions of arrays
     n,p = size(x)
@@ -85,20 +75,15 @@ function ELSQVariables{T <: Float}(
 
     # form arrays
     b        = SharedArray(T, (p,), pids=pids) :: typeof(y)
-    nrmsq    = (length(y) - 1) * ones(T, p) 
+    nrmsq    = (length(y) - 1) * ones(T, p)
     df       = SharedArray(T, (p,), pids=pids) :: typeof(y)
-#    dotprods = zeros(T, p) 
-    dotprods = SharedArray(T, (p,), pids=pids) :: typeof(y) 
-#    tempp    = zeros(T, p) 
+    dotprods = SharedArray(T, (p,), pids=pids) :: typeof(y)
     tempp    = SharedArray(T, (p,), pids=pids) :: typeof(y)
     r        = SharedArray(T, (n,), pids=pids) :: typeof(y)
-#    tempn    = zeros(T, n) 
-#    tempn2   = zeros(T, n) 
     tempn    = SharedArray(T, (n,), pids=pids) :: typeof(y)
     tempn2   = SharedArray(T, (n,), pids=pids) :: typeof(y)
     xb       = SharedArray(T, (n,), pids=pids) :: typeof(y)
     perm     = collect(1:p)
-#    mask_n   = zeros(Int, n)
     mask_n   = ones(Int, n)
     idx      = falses(p)
 
@@ -128,14 +113,6 @@ immutable ELSQCrossvalidationResults{T <: Float}
     bids :: Vector{UTF8String}
 end
 
-#function Base.display(x::ELSQCrossvalidationResults)
-#    println("Crossvalidation Results:")
-#    println("Best model size is $k predictors")
-#    println("\tPredictor\tValue\tMSE")
-#    for i in eachindex(x.bidx)
-#        println("\t", x.bidx[i], "\t", x.b[i], "\t", x.mses[i])
-#    end
-#end
 
 # constructor for when bids are not available
 # simply makes vector of "V$i" where $i are drawn from bidx
@@ -145,14 +122,14 @@ function ELSQCrossvalidationResults{T <: Float}(
     bidx :: Vector{Int},
     k    :: Int,
     path :: Vector{Int},
-)  
+) 
     bids = convert(Vector{UTF8String}, ["V" * "$i" for i in bidx]) :: Vector{UTF8String}
     ELSQCrossvalidationResults{eltype(mses)}(mses, b, bidx, k, path, bids)
 end
 
 # function to view an ELSQCrossvalidationResults object
 function Base.show(io::IO, x::ELSQCrossvalidationResults)
-    println(io, "Crossvalidation results:") 
+    println(io, "Crossvalidation results:")
     println(io, "Minimum MSE ", minimum(x.mses), " occurs at k = $(x.k).")
     println(io, "Best model β has the following nonzero coefficients:")
     println(io, DataFrame(Predictor=x.bidx, Name=x.bids, Estimated_β=x.b))
@@ -182,37 +159,31 @@ function print_maxiter{T <: Float}(max_iter::Int, loss::T)
     print_with_color(:red, "Exchange algorithm has hit maximum iterations $(max_iter)!\n")
     print_with_color(:red, "Return value may be incorrect\n")
     print_with_color(:red, "Current Loss: $(loss)\n")
-end 
+end
 
 function errorcheck{T <: Float}(
     x        :: DenseMatrix{T},
     y        :: DenseVector{T},
-#    k        :: Int,
     tol      :: T,
     max_iter :: Int,
     window   :: Int,
     p        :: Int = size(x,2)
 )
-#    0 <= k <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(bvec)"))
     tol >= eps()          || throw(ArgumentError("Global tolerance must exceed machine precision"))
     max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
-#    0 <= window <= k      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
     return nothing
 end
 
 function errorcheck{T <: Float}(
     x        :: BEDFile{T},
     y        :: SharedVector{T},
-#    k        :: Int,
     tol      :: T,
     max_iter :: Int,
     window   :: Int,
     p        :: Int = size(x,2)
 )
-#    0 <= k <= p           || throw(ArgumentError("Value of r must be nonnegative and cannot exceed length(bvec)"))
     tol >= eps()          || throw(ArgumentError("Global tolerance must exceed machine precision"))
     max_iter >= 1         || throw(ArgumentError("Maximum number of iterations must exceed 1"))
-#    0 <= window <= k      || throw(ArgumentError("Value of selection window must be nonnegative and cannot exceed r"))
     return nothing
 end
 
@@ -225,12 +196,16 @@ function print_cv_results{T <: Float}(errors::DenseVector{T}, path::DenseVector{
     println("\nThe lowest MSE is achieved at k = ", k)
 end
 
+#########################################
+### subroutines for exchange_leastsq! ###
+#########################################
+
 # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
 # these predictors are candidates for inclusion in set
 # _exlstsq_innerloop! find best new predictor
 function _exlstsq_innerloop!{T <: Float}(
     v   :: ELSQVariables{T},
-    k   :: Int, 
+    k   :: Int,
     i   :: Int,
     p   :: Int,
     tol :: T
@@ -272,7 +247,7 @@ function _swap_predictors!{T <: Float}(
     m   :: Int,
     adb :: T
 )
-    # save ith best predictor 
+    # save ith best predictor
     j = v.perm[i]
 
     # replace index of ith best with new best predictor
@@ -282,11 +257,11 @@ function _swap_predictors!{T <: Float}(
     # at this point, swap of indices is complete
     v.perm[r] = j
 
-    # replace coefficient of mth best predictor with a / b 
+    # replace coefficient of mth best predictor with a / b
     v.b[m] = adb
 
     # if rth and ith predictors coincide,
-    # then set ith best predictor coefficient to zero 
+    # then set ith best predictor coefficient to zero
     if r != i
         v.b[j] = zero(T)
     end
@@ -306,7 +281,7 @@ function axpymbz!{T <: Float}(
     b :: T,
     z :: DenseVector{T};
 )
-    @inbounds @simd for i in eachindex(y) 
+    @inbounds @simd for i in eachindex(y)
         y[i] = y[i] + a*x[i] - b*z[i]
     end
     return nothing
@@ -320,16 +295,16 @@ function refit_exlstsq{T <: Float}(
     models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
     tol      :: T    = convert(T, 1e-6),
     max_iter :: Int  = 100,
-    window   :: Int  = maximum(models),
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     quiet    :: Bool = true,
 )
     # initialize β vector and temporary arrays
     v = ELSQVariables(x, y)
 
     # first use exchange algorithm to extract model
-    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k)
+    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=size(x,2))
 
-    # which components of beta are nonzero?
+    # which components of β are nonzero?
     # cannot use binary indices here since we need to return Int indices
     bidx = find(v.b)
 
@@ -351,7 +326,7 @@ function refit_exlstsq{T <: Float}(
         warn("caught error: ", e, "\nSetting returned values of b to -Inf")
         fill!(b, -Inf)
     end
-    
+   
     return b, bidx
 end
 
@@ -365,7 +340,7 @@ function refit_exlstsq(
     meanfile :: ASCIIString,
     precfile :: ASCIIString,
     k        :: Int;
-    models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
+    models   :: DenseVector{Int} = collect(1:20),
     pids     :: DenseVector{Int} = procs(),
     tol      :: Float = convert(T, 1e-6),
     max_iter :: Int   = 100,
@@ -374,7 +349,7 @@ function refit_exlstsq(
     header   :: Bool  = false
 )
 
-    # initialize all variables 
+    # initialize all variables
     x = BEDFile(T, xfile, xtfile, x2file, meanfile, precfile, pids=pids, header=header)
     y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
     v = ELSQVariables(x, y, ones(Int, length(y)))
@@ -382,13 +357,13 @@ function refit_exlstsq(
     # first use exchange algorithm to extract model
     exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k)
 
-    # which components of beta are nonzero?
+    # which components of β are nonzero?
     inferred_model = v.b .!= zero(T)
     bidx = find(inferred_model)
-    
+   
     # allocate the submatrix of x corresponding to the inferred model
     x_inferred = zeros(T, x.geno.n, sum(inferred_model))
-    decompress_genotypes!(x_inferred, x, inferred_model) 
+    decompress_genotypes!(x_inferred, x, inferred_model)
 
     # now estimate b with the ordinary least squares estimator b = inv(x'x)x'y
     # return it with the vector of MSEs
@@ -402,18 +377,21 @@ function refit_exlstsq(
         fill!(b, -Inf)
     end
 
+    # get predictor names before returning
+    bids = prednames(x)[bidx]
+
     return b, bidx
 end
 
 
-# refitting routine for GWAS data with just genotypes, covariates, y 
+# refitting routine for GWAS data with just genotypes, covariates, y
 function refit_exlstsq(
     T        :: Type,
     xfile    :: ASCIIString,
     x2file   :: ASCIIString,
     yfile    :: ASCIIString,
     k        :: Int;
-    models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
+    models   :: DenseVector{Int} = collect(1:20),
     pids     :: DenseVector{Int} = procs(),
     tol      :: Float = convert(T, 1e-6),
     max_iter :: Int   = 100,
@@ -422,7 +400,7 @@ function refit_exlstsq(
     header   :: Bool  = false
 )
 
-    # initialize all variables 
+    # initialize all variables
     x = BEDFile(T, xfile, x2file, pids=pids, header=header)
     y = SharedArray(abspath(yfile), T, (x.geno.n,), pids=pids) :: SharedVector{T}
     v = ELSQVariables(x, y, ones(Int, length(y)))
@@ -433,10 +411,10 @@ function refit_exlstsq(
     # which components of β are nonzero?
     inferred_model = v.b .!= zero(T)
     bidx = find(inferred_model)
-    
+   
     # allocate the submatrix of x corresponding to the inferred model
     x_inferred = zeros(T, x.geno.n, sum(inferred_model))
-    decompress_genotypes!(x_inferred, x, inferred_model) 
+    decompress_genotypes!(x_inferred, x, inferred_model)
 
     # now estimate β with the ordinary least squares estimator b = inv(x'x)x'y
     # return it with the vector of MSEs
@@ -450,7 +428,10 @@ function refit_exlstsq(
         fill!(b, -Inf)
     end
 
-    return b, bidx
+    # get predictor names before returning
+    bids = prednames(x)[bidx]
+
+    return b, bidx, bids
 end
 
 
@@ -464,7 +445,7 @@ function update_current_best_predictor!{T <: Float}(
     # first get index of current best predictor
     m = v.perm[r] :: Int
 
-    # tempn2 = x[:,m] 
+    # tempn2 = x[:,m]
     #update_col!(v.tempn2, x, m)
     copy!(v.tempn2, sub(x, :, m))
 
@@ -485,7 +466,7 @@ function update_current_best_predictor!{T <: Float}(
     m = v.perm[r] :: Int
 
     # v.tempn2 = x[:,m]
-    decompress_genotypes!(v.tempn2, x, m) 
+    decompress_genotypes!(v.tempn2, x, m)
 
     # v.tempn2[v.mask_n .== 0] = 0.0
     mask!(v.tempn2, v.mask_n, 0, zero(T))
@@ -501,10 +482,10 @@ end
 
 
 function get_inner_product!{T <: Float}(
-    z :: DenseVector{T}, 
-    w :: DenseVector{T}, 
-    v :: ELSQVariables{T}, 
-    x :: DenseMatrix{T}, 
+    z :: DenseVector{T},
+    w :: DenseVector{T},
+    v :: ELSQVariables{T},
+    x :: DenseMatrix{T},
     i :: Int
 )
     if !haskey(v.inner, i)
@@ -515,32 +496,32 @@ end
 
 
 function get_inner_product!{T <: Float}(
-    z :: DenseVector{T}, 
-    w :: DenseVector{T}, 
-    v :: ELSQVariables{T}, 
-    x :: BEDFile{T}, 
+    z :: DenseVector{T},
+    w :: DenseVector{T},
+    v :: ELSQVariables{T},
+    x :: BEDFile{T},
     i :: Int;
     pids :: DenseVector{Int} = procs(x)
 )
     if !haskey(v.inner, i)
         At_mul_B!(z, x, w, v.mask_n, pids=pids)
-        v.inner[i] = copy(z) 
+        v.inner[i] = copy(z)
     end
     copy!(z, v.inner[i])
 end
 
 function get_inner_product!{T <: Float}(
-    z :: DenseVector{T}, 
-    w :: DenseVector{T}, 
-    v :: ELSQVariables{T}, 
-    x :: BEDFile{T}, 
+    z :: DenseVector{T},
+    w :: DenseVector{T},
+    v :: ELSQVariables{T},
+    x :: BEDFile{T},
     a :: PlinkGPUVariables{T},
     i :: Int;
     pids :: DenseVector{Int} = procs(x)
 )
     if !haskey(v.inner, i)
-        At_mul_B!(z, x, w, v.mask_n, a, pids=pids)
-        v.inner[i] = copy(z) 
+        At_mul_B!(z, x, w, v.mask_n, a)
+        v.inner[i] = copy(z)
     end
     copy!(z, v.inner[i])
 end

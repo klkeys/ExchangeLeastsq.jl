@@ -13,13 +13,13 @@ function exchange_leastsq!{T <: Float}(
     pids     :: DenseVector{Int} = procs(x),
     n        :: Int  = length(y),
     p        :: Int  = size(x,2),
-    window   :: Int  = k,
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
     quiet    :: Bool = false
 )
     # initial value for previous residual sum of squares
-    old_rss = oftype(tol,Inf) 
+    old_rss = oftype(tol,Inf)
 
     # obtain top r components of bvec in magnitude
     selectperm!(v.perm, v.b, k, by=abs, rev=true, initialized=true)
@@ -56,13 +56,6 @@ function exchange_leastsq!{T <: Float}(
             # if necessary, compute inner products of current predictor against all other predictors
             # store this information in Dict inner
             # for current index, hold dot products in memory for duration of inner loop
-            # the if/else statement below is the same as but faster than
-            # > dotprods = get!(inner, l, BLAS.gemv('T', one(T), X, tempn))
-#            if !haskey(v.inner, l)
-#                At_mul_B!(v.tempp, x, v.tempn, v.mask_n, w)
-#                v.inner[l] = copy(v.tempp) 
-#            end
-#            copy!(v.dotprods, v.inner[l])
             get_inner_product!(v.dotprods, v.tempn, v, x, w, l, pids=pids)
 
             # subroutine compares current predictor i against all predictors k+1, k+2, ..., p
@@ -75,13 +68,6 @@ function exchange_leastsq!{T <: Float}(
 
             # if necessary, compute inner product of current predictor against all other predictors
             # save in our Dict for future reference
-            # compare in performance to
-            # > tempp = get!(inner, m, BLAS.gemv('T', one(T), X, tempn2))
-#            if !haskey(v.inner, m)
-#                At_mul_B!(v.tempp, x, v.tempn2, v.mask_n, w)
-#                v.inner[m] = copy(v.tempp)
-#            end
-#            copy!(v.tempp, v.inner[m])
             get_inner_product!(v.tempp, v.tempn2, v, x, w, m, pids=pids)
 
             # also update df
@@ -98,12 +84,12 @@ function exchange_leastsq!{T <: Float}(
         # test for descent failure
         # if no descent failure, then test for convergence
         # if not converged, then save RSS and check finiteness
-        # if not converged and still finite, then save RSS and continue 
+        # if not converged and still finite, then save RSS and continue
         ascent    = rss > old_rss + tol
         converged = abs(old_rss - rss) / abs(old_rss + 1) < tol
         old_rss = rss
         ascent && print_descent_error(iter, old_rss, rss)
-        converged && return nothing 
+        converged && return nothing
 
         check_finiteness(rss)
 
@@ -127,13 +113,13 @@ function exlstsq{T <: Float}(
     y        :: SharedVector{T},
     kernfile :: ASCIIString;
     models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
-    pids     :: DenseVector{Int} = procs(x), 
-    v        :: ELSQVariables{T} = ELSQVariables(x, y), 
+    pids     :: DenseVector{Int} = procs(x),
+    v        :: ELSQVariables{T} = ELSQVariables(x, y),
     w        :: PlinkGPUVariables{T} = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n),
-    window   :: Int  = maximum(models),
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
-    quiet    :: Bool = true 
+    quiet    :: Bool = true
 )
     # dimensions of problem
     nmodels = length(models)
@@ -152,7 +138,7 @@ function exlstsq{T <: Float}(
     end
 
     # return matrix of betas
-    return betas 
+    return betas
 end
 
 """
@@ -169,7 +155,7 @@ function one_fold{T <: Float}(
     fold     :: Int;
     tol      :: T    = convert(T, 1e-6),
     max_iter :: Int  = 100,
-    window   :: Int  = size(x,2),
+    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     quiet    :: Bool = true
 )
 
@@ -178,27 +164,24 @@ function one_fold{T <: Float}(
     test_idx = folds .== fold
     test_size = sum(test_idx)
 
-    # preallocate vector for output
-    myerrors = zeros(T, sum(test_idx))
-
     # train_idx is the vector that indexes the TRAINING set
     train_idx = convert(Vector{Int}, !test_idx)
     test_idx  = convert(Vector{Int}, test_idx)
-
 
     # preallocate temporary variables
     v = ELSQVariables(x, y, train_idx)
     w = PlinkGPUVariables(v.df, x, y, kernfile, v.mask_n)
 
     # will return a sparse matrix of betas
-    betas = exlstsq(x, y, kernfile, models=models, v=v, w=w, window=window, max_iter=max_iter, tol=tol, quiet=quiet) 
+    betas = exlstsq(x, y, kernfile, models=models, v=v, w=w, window=window, max_iter=max_iter, tol=tol, quiet=quiet)
 
-    # compute the mean out-of-sample error for the TEST set
+    # preallocate vector for output
     mses = zeros(T, length(models))
 
-    for i in eachindex(models) 
-        # set b 
-        copy!(v.b, sub(betas, :, i)) 
+    # compute the mean out-of-sample error for the TEST set
+    for i in eachindex(models)
+        # set b
+        copy!(v.b, sub(betas, :, i))
 
         # update indices of current b
         update_indices!(v.idx, v.b)
@@ -240,7 +223,7 @@ function pfold(
     pids     :: DenseVector{Int} = procs(),
     tol      :: Float = convert(T, 1e-6),
     max_iter :: Int   = 100,
-    window   :: Int   = 20, 
+    window   :: Int   = 20,
     quiet    :: Bool  = true,
     header   :: Bool  = false,
 )
@@ -302,9 +285,9 @@ end
 
 
 """
-    cv_exlstsq(x::BEDFile, y, models, q) -> ELSQCrossvalidationResults 
+    cv_exlstsq(x::BEDFile, y, models, q) -> ELSQCrossvalidationResults
 
-Perofrm `q`-fold crossvalidation for the best model size in the exchange algorithm for a `BEDFile` object `x`, response vector `y`, and model sizes specified in `models`. 
+Perofrm `q`-fold crossvalidation for the best model size in the exchange algorithm for a `BEDFile` object `x`, response vector `y`, and model sizes specified in `models`.
 """
 function cv_exlstsq(
     T        :: Type,
@@ -317,7 +300,7 @@ function cv_exlstsq(
     kernfile :: ASCIIString;
     q        :: Int = max(3, min(CPU_CORES, 5)),
     models   :: DenseVector{Int} = begin
-           # find p from the corresponding BIM file, then make path 
+           # find p from the corresponding BIM file, then make path
             bimfile = xfile[1:(endof(xfile)-3)] * "bim"
             p       = countlines(bimfile)
             collect(1:min(20,p))
@@ -349,10 +332,9 @@ function cv_exlstsq(
 
     # recompute ideal model
     # not worth effort to recompute only one model size with GPU, so use CPU instead
-    b, bidx = refit_exlstsq(T, xfile, xtfile, x2file, yfile, meanfile, precfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
+    # also extract names of predictors
+    b, bidx, bids = refit_exlstsq(T, xfile, xtfile, x2file, yfile, meanfile, precfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
 
-    # also extract names of predictors before returning
-    bids = prednames(x)[bidx]
     return ELSQCrossvalidationResults{T}(mses, b, bidx, k, sdata(models), bids)
 end
 
@@ -443,7 +425,7 @@ function cv_exlstsq(
     kernfile :: ASCIIString;
     q        :: Int = max(3, min(CPU_CORES, 5)),
     models   :: DenseVector{Int} = begin
-           # find p from the corresponding BIM file, then make path 
+           # find p from the corresponding BIM file, then make path
             bimfile = xfile[1:(endof(xfile)-3)] * "bim"
             p       = countlines(bimfile)
             collect(1:min(20,p))
@@ -480,10 +462,9 @@ function cv_exlstsq(
 
     # recompute ideal model
     # not worth effort to recompute only one model size with GPU, so use CPU instead
-    b, bidx = refit_exlstsq(T, xfile, x2file, yfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
+    # also extract predictor names
+    b, bidx, bids = refit_exlstsq(T, xfile, x2file, yfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
 
-    # also extract predictor names before returning
-    bids = prednames(x)[bidx]
     return ELSQCrossvalidationResults{T}(mses, sdata(models), b, bidx, k)
 end
 

@@ -1,7 +1,7 @@
 """
 An iterative exchange algorithm for penalized least squares regression.
 The exchange algorithm operates similar to cyclic coordinate descent,
-except that it swaps (exchanges) predictors to improve the residual sum of squares. 
+except that it swaps (exchanges) predictors to improve the residual sum of squares.
 """
 module ExchangeLeastsq
 
