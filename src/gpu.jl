@@ -13,7 +13,7 @@ function exchange_leastsq!{T <: Float}(
     pids     :: DenseVector{Int} = procs(x),
     n        :: Int  = length(y),
     p        :: Int  = size(x,2),
-    window   :: Int  = max(20, min(maximum(models), size(x,2))),
+    window   :: Int  = k, 
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
     quiet    :: Bool = false
@@ -333,7 +333,7 @@ function cv_exlstsq(
     # recompute ideal model
     # not worth effort to recompute only one model size with GPU, so use CPU instead
     # also extract names of predictors
-    b, bidx, bids = refit_exlstsq(T, xfile, xtfile, x2file, yfile, meanfile, precfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
+    b, bidx, bids = refit_exlstsq(T, xfile, xtfile, x2file, yfile, meanfile, precfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, quiet=quiet, header=header)
 
     return ELSQCrossvalidationResults{T}(mses, b, bidx, k, sdata(models), bids)
 end
@@ -463,7 +463,7 @@ function cv_exlstsq(
     # recompute ideal model
     # not worth effort to recompute only one model size with GPU, so use CPU instead
     # also extract predictor names
-    b, bidx, bids = refit_exlstsq(T, xfile, x2file, yfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
+    b, bidx, bids = refit_exlstsq(T, xfile, x2file, yfile, k, models=models, pids=pids, tol=tol, max_iter=max_iter, quiet=quiet, header=header)
 
     return ELSQCrossvalidationResults{T}(mses, sdata(models), b, bidx, k)
 end

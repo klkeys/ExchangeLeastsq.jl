@@ -295,14 +295,13 @@ function refit_exlstsq{T <: Float}(
     models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
     tol      :: T    = convert(T, 1e-6),
     max_iter :: Int  = 100,
-    window   :: Int  = max(20, min(maximum(models), size(x,2))),
     quiet    :: Bool = true,
 )
     # initialize β vector and temporary arrays
     v = ELSQVariables(x, y)
 
     # first use exchange algorithm to extract model
-    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=size(x,2))
+    exchange_leastsq!(v, x, y, k, max_iter=max_iter, quiet=quiet, tol=tol, window=k)
 
     # which components of β are nonzero?
     # cannot use binary indices here since we need to return Int indices
@@ -344,7 +343,6 @@ function refit_exlstsq(
     pids     :: DenseVector{Int} = procs(),
     tol      :: Float = convert(T, 1e-6),
     max_iter :: Int   = 100,
-    window   :: Int   = maximum(models),
     quiet    :: Bool  = true,
     header   :: Bool  = false
 )
@@ -395,7 +393,6 @@ function refit_exlstsq(
     pids     :: DenseVector{Int} = procs(),
     tol      :: Float = convert(T, 1e-6),
     max_iter :: Int   = 100,
-    window   :: Int   = maximum(models),
     quiet    :: Bool  = true,
     header   :: Bool  = false
 )
@@ -446,7 +443,6 @@ function update_current_best_predictor!{T <: Float}(
     m = v.perm[r] :: Int
 
     # tempn2 = x[:,m]
-    #update_col!(v.tempn2, x, m)
     copy!(v.tempn2, sub(x, :, m))
 
     # v.r = betal*v.tempn + adb*v.tempn2

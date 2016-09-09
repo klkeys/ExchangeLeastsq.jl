@@ -186,7 +186,7 @@ function cv_exlstsq{T <: Float}(
     quiet || print_cv_results(mses, models, k)
 
     # refit coefficients
-    b, bidx = refit_exlstsq(x, y, k, models=models, tol=tol, max_iter=max_iter, window=window, quiet=quiet)
+    b, bidx = refit_exlstsq(x, y, k, models=models, tol=tol, max_iter=max_iter, quiet=quiet)
 
     return ELSQCrossvalidationResults(mses, b, bidx, k, sdata(models))
 end

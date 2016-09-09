@@ -45,7 +45,7 @@ Optional Arguments:
 
 - `n` and `p` are the dimensions of `x`; the former defaults to `length(y)` while the latter defaults to `size(x,2)`.
 - `window` is an `Int` to dictate the dimension of the search window for potentially exchanging predictors.
-   Defaults to `max(20, min(maximum(models), size(x,2)))` or the greater of `20` and `r`, where `r` is the lesser of the maximum model size and the number of predictors.
+   Defaults to `k`, which tells `exchange_leastsq!` to search all active predictors.
    Decreasing this quantity tells the algorithm to search through fewer current active predictors,
    which can decrease compute time but can also degrade model recovery performance.
 - `max_iter` is the maximum permissible number of iterations. Defaults to `100`.
@@ -59,7 +59,7 @@ function exchange_leastsq!{T <: Float}(
     k        :: Int;
     n        :: Int  = length(y),
     p        :: Int  = size(x,2),
-    window   :: Int  = max(20, min(maximum(models), size(x,2))),
+    window   :: Int  = k,         # <--- search *all* active predictors 
     max_iter :: Int  = 100,
     tol      :: T    = convert(T, 1e-6),
     quiet    :: Bool = true
