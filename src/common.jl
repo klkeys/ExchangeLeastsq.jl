@@ -104,13 +104,19 @@ function ELSQVariables{T <: Float}(
     return w
 end
 
+
+"A subroutine to automatically set the default number of folds, if the user has not provided them."
+set_cv_fold_num(minfolds::Int, maxfolds::Int) = max(minfolds, min(Sys.CPU_CORES, maxfolds)) :: Int
+
+
+
 immutable ELSQCrossvalidationResults{T <: Float}
     mses :: Vector{T}
     b    :: Vector{T}
     bidx :: Vector{Int}
     k    :: Int
     path :: Vector{Int}
-    bids :: Vector{UTF8String}
+    bids :: Vector{String}
 end
 
 
@@ -123,7 +129,7 @@ function ELSQCrossvalidationResults{T <: Float}(
     k    :: Int,
     path :: Vector{Int},
 ) 
-    bids = convert(Vector{UTF8String}, ["V" * "$i" for i in bidx]) :: Vector{UTF8String}
+    bids = convert(Vector{String}, ["V" * "$i" for i in bidx]) :: Vector{String}
     ELSQCrossvalidationResults{eltype(mses)}(mses, b, bidx, k, path, bids)
 end
 
@@ -332,12 +338,12 @@ end
 # refitting routine for GWAS data with x', mean, prec files
 function refit_exlstsq(
     T        :: Type,
-    xfile    :: ASCIIString,
-    xtfile   :: ASCIIString,
-    x2file   :: ASCIIString,
-    yfile    :: ASCIIString,
-    meanfile :: ASCIIString,
-    precfile :: ASCIIString,
+    xfile    :: String,
+    xtfile   :: String,
+    x2file   :: String,
+    yfile    :: String,
+    meanfile :: String,
+    precfile :: String,
     k        :: Int;
     models   :: DenseVector{Int} = collect(1:20),
     pids     :: DenseVector{Int} = procs(),
@@ -385,9 +391,9 @@ end
 # refitting routine for GWAS data with just genotypes, covariates, y
 function refit_exlstsq(
     T        :: Type,
-    xfile    :: ASCIIString,
-    x2file   :: ASCIIString,
-    yfile    :: ASCIIString,
+    xfile    :: String,
+    x2file   :: String,
+    yfile    :: String,
     k        :: Int;
     models   :: DenseVector{Int} = collect(1:20),
     pids     :: DenseVector{Int} = procs(),
@@ -443,7 +449,7 @@ function update_current_best_predictor!{T <: Float}(
     m = v.perm[r] :: Int
 
     # tempn2 = x[:,m]
-    copy!(v.tempn2, sub(x, :, m))
+    copy!(v.tempn2, view(x, :, m))
 
     # v.r = betal*v.tempn + adb*v.tempn2
     axpymbz!(v.r, betal, v.tempn, adb, v.tempn2)

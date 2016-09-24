@@ -180,7 +180,7 @@ function one_fold{T <: Float}(
     for i in eachindex(models)
 
         # set β
-        copy!(v.b, sub(betas, :, i))
+        copy!(v.b, view(betas, :, i))
 
         # update indices of current β
         update_indices!(v.idx, v.b)
@@ -209,12 +209,12 @@ Each fold will compute a regularization path `1:path`.
 """
 function pfold(
     T        :: Type,
-    xfile    :: ASCIIString,
-    xtfile   :: ASCIIString,
-    x2file   :: ASCIIString,
-    yfile    :: ASCIIString,
-    meanfile :: ASCIIString,
-    precfile :: ASCIIString,
+    xfile    :: String,
+    xtfile   :: String,
+    x2file   :: String,
+    yfile    :: String,
+    meanfile :: String,
+    precfile :: String,
     models   :: DenseVector{Int},
     folds    :: DenseVector{Int},
     q        :: Int;
@@ -237,7 +237,7 @@ function pfold(
     nextidx() = (idx=i; i+=1; idx)
 
     # preallocate cell array for results
-    results = cell(q)
+    results = Array{Any}(q)
 
     # master process will distribute tasks to workers
     # master synchronizes results at end before returning
@@ -289,13 +289,13 @@ Perofrm `q`-fold crossvalidation for the best model size in the exchange algorit
 """
 function cv_exlstsq(
     T        :: Type,
-    xfile    :: ASCIIString,
-    xtfile   :: ASCIIString,
-    x2file   :: ASCIIString,
-    yfile    :: ASCIIString,
-    meanfile :: ASCIIString,
-    precfile :: ASCIIString;
-    q        :: Int = max(3, min(CPU_CORES, 5)),
+    xfile    :: String,
+    xtfile   :: String,
+    x2file   :: String,
+    yfile    :: String,
+    meanfile :: String,
+    precfile :: String;
+    q        :: Int = max(3, min(Sys.CPU_CORES, 5)),
     models   :: DenseVector{Int} = begin
            # find p from the corresponding BIM file, then make path
             bimfile = xfile[1:(endof(xfile)-3)] * "bim"
@@ -334,15 +334,15 @@ function cv_exlstsq(
 end
 
 # default type for cv_exlstsq is Float64
-cv_exlstsq(xfile::ASCIIString, xtfile::ASCIIString, x2file::ASCIIString, yfile::ASCIIString, meanfile::ASCIIString, precfile::ASCIIString; q::Int = max(3, min(CPU_CORES, 5)), models::DenseVector{Int} = begin bimfile = xfile[1:(endof(xfile)-3)] * "bim"; p = countlines(bimfile); collect(1:min(20,p)) end, folds::DenseVector{Int} = begin famfile = xfile[1:(endof(xfile)-3)] * "fam"; n = countlines(famfile); cv_get_folds(n, q) end, pids::DenseVector{Int} = procs(), tol::Float64 = 1e-6, max_iter::Int  = 100, window::Int  = 20, quiet::Bool = true, header::Bool = false,
+cv_exlstsq(xfile::String, xtfile::String, x2file::String, yfile::String, meanfile::String, precfile::String; q::Int = max(3, min(Sys.CPU_CORES, 5)), models::DenseVector{Int} = begin bimfile = xfile[1:(endof(xfile)-3)] * "bim"; p = countlines(bimfile); collect(1:min(20,p)) end, folds::DenseVector{Int} = begin famfile = xfile[1:(endof(xfile)-3)] * "fam"; n = countlines(famfile); cv_get_folds(n, q) end, pids::DenseVector{Int} = procs(), tol::Float64 = 1e-6, max_iter::Int  = 100, window::Int  = 20, quiet::Bool = true, header::Bool = false,
 ) = cv_exlstsq(Float64, xfile, xtfile, x2file, yfile, meanfile, precfile, folds=folds, q=q, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)
 
 
 function pfold(
     T        :: Type,
-    xfile    :: ASCIIString,
-    x2file   :: ASCIIString,
-    yfile    :: ASCIIString,
+    xfile    :: String,
+    x2file   :: String,
+    yfile    :: String,
     models   :: DenseVector{Int},
     folds    :: DenseVector{Int},
     q        :: Int;
@@ -365,7 +365,7 @@ function pfold(
     nextidx() = (idx=i; i+=1; idx)
 
     # preallocate cell array for results
-    results = cell(q)
+    results = Array{Any}(q)
 
     # master process will distribute tasks to workers
     # master synchronizes results at end before returning
@@ -416,10 +416,10 @@ Perofrm `q`-fold crossvalidation for the best model size in the exchange algorit
 """
 function cv_exlstsq(
     T        :: Type,
-    xfile    :: ASCIIString,
-    x2file   :: ASCIIString,
-    yfile    :: ASCIIString;
-    q        :: Int = max(3, min(CPU_CORES, 5)),
+    xfile    :: String,
+    x2file   :: String,
+    yfile    :: String;
+    q        :: Int = max(3, min(Sys.CPU_CORES, 5)),
     models   :: DenseVector{Int} = begin
            # find p from the corresponding BIM file, then make path
             bimfile = xfile[1:(endof(xfile)-3)] * "bim"
@@ -458,5 +458,5 @@ function cv_exlstsq(
 end
 
 # default type for cv_exlstsq is Float64
-cv_exlstsq(xfile::ASCIIString, x2file::ASCIIString, yfile::ASCIIString; q::Int = max(3, min(CPU_CORES, 5)), models::DenseVector{Int} = begin bimfile = xfile[1:(endof(xfile)-3)] * "bim"; p = countlines(bimfile); collect(1:min(20,p)) end, folds::DenseVector{Int} = begin famfile = xfile[1:(endof(xfile)-3)] * "fam"; n = countlines(famfile); cv_get_folds(n, q) end, pids::DenseVector{Int} = procs(), tol::Float64 = 1e-6, max_iter::Int  = 100, window::Int  = 20, quiet::Bool = true, header::Bool = false,
+cv_exlstsq(xfile::String, x2file::String, yfile::String; q::Int = max(3, min(Sys.CPU_CORES, 5)), models::DenseVector{Int} = begin bimfile = xfile[1:(endof(xfile)-3)] * "bim"; p = countlines(bimfile); collect(1:min(20,p)) end, folds::DenseVector{Int} = begin famfile = xfile[1:(endof(xfile)-3)] * "fam"; n = countlines(famfile); cv_get_folds(n, q) end, pids::DenseVector{Int} = procs(), tol::Float64 = 1e-6, max_iter::Int  = 100, window::Int  = 20, quiet::Bool = true, header::Bool = false,
 ) = cv_exlstsq(Float64, xfile, x2file, yfile, folds=folds, q=q, models=models, pids=pids, tol=tol, max_iter=max_iter, window=window, quiet=quiet, header=header)

@@ -87,7 +87,7 @@ function pfold{T <: Float}(
     nextidx() = (idx=i; i+=1; idx)
 
     # preallocate cell array for results
-    results = cell(nfolds)
+    results = Array{Any}(nfolds)
 
     # master process will distribute tasks to workers
     # master synchronizes results at end before returning
@@ -166,7 +166,7 @@ function cv_exlstsq{T <: Float}(
     x        :: DenseMatrix{T},
     y        :: DenseVector{T};
     models   :: DenseVector{Int} = collect(1:min(20,size(x,2))),
-    q        :: Int              = max(3, min(CPU_CORES, 5)),
+    q        :: Int              = set_cv_fold_num(3, 5), 
     pids     :: DenseVector{Int} = procs(),
     folds    :: DenseVector{Int} = cv_get_folds(sdata(y),q),
     tol      :: T    = convert(T, 1e-6),
@@ -174,6 +174,7 @@ function cv_exlstsq{T <: Float}(
     window   :: Int  = max(20, min(maximum(models), size(x,2))),
     quiet    :: Bool = true,
 )
+
 
 #    1 <= minimum(models) <= maximum(models) <= size(x,2) || throw(ArgumentError("Model sizes must be positive and cannot exceed number of predictors"))
 

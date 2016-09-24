@@ -17,8 +17,8 @@ using Gadfly
 export exlstsq
 export cv_exlstsq
 
-"An alias for the `OpenCL` module name"
-const cl = OpenCL
+#"An alias for the `OpenCL` module name"
+#const cl = OpenCL
 
 # typealias for Float32/Float64
 typealias Float Union{Float32, Float64}

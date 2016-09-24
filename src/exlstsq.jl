@@ -93,7 +93,7 @@ function exchange_leastsq!{T <: Float}(
             l     = v.perm[i]
             betal = v.b[l]
             #update_col!(v.tempn, x, l)  # tempn now holds X[:,l]
-            copy!(v.tempn, sub(x, :, l))
+            copy!(v.tempn, view(x, :, l))
 
             # if necessary, compute inner products of current predictor against all other predictors
             # store this information in Dict inner

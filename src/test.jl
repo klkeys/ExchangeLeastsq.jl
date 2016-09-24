@@ -89,7 +89,7 @@ end
 
 # TEST THE EXCHANGE ALGORITHM FOR LEAST SQUARES REGRESSION
 # This subroutine runs the IHT on a dataset of chromosome 1 data from the WTCCC.
-function test_exchangeleastsq(x_path::ASCIIString = "/Users/kkeys/Downloads/wtccc-n2000p32307.txt", y_path::ASCIIString = "/Users/kkeys/Downloads/withnoiselevelsd0_1/Y.100.1", b_path::ASCIIString = "/Users/kkeys/Downloads/withnoiselevelsd0_1/causal.100.1", r::Int = 100, tol::Float64 = 1e-6, max_iter::Int = 100, quiet::Bool = false, extra::Int = 100, window::Int = r) 
+function test_exchangeleastsq(x_path::String = "/Users/kkeys/Downloads/wtccc-n2000p32307.txt", y_path::String = "/Users/kkeys/Downloads/withnoiselevelsd0_1/Y.100.1", b_path::String = "/Users/kkeys/Downloads/withnoiselevelsd0_1/causal.100.1", r::Int = 100, tol::Float64 = 1e-6, max_iter::Int = 100, quiet::Bool = false, extra::Int = 100, window::Int = r) 
 
     # repeat input options
     println("This function will test the exchange algorithm.")
@@ -202,7 +202,7 @@ end
 
 # TEST THE EXCHANGE ALGORITHM FOR LEAST SQUARES REGRESSION OVER PLINK BINARY DATA
 # This subroutine runs the exchange algorithm on a GWAS dataset from the WTCCC.
-function test_exchangeleastsq_plink(x_path::ASCIIString = "/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean.bed", xt_path::ASCIIString = "/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean_t.bed", y_path::ASCIIString = "/Users/kkeys/Downloads/withnoiselevelsd0_1/Y.100.1", b_path::ASCIIString = "/Users/kkeys/Downloads/withnoiselevelsd0_1/causal.100.1", r::Int = 10, tol::Float64 = 1e-4, max_iter::Int = 100, quiet::Bool = false, extra::Int = 10, window::Int = 10) 
+function test_exchangeleastsq_plink(x_path::String = "/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean.bed", xt_path::String = "/Users/kkeys/Downloads/wtccc_full/wtccc-n2k_chr1_clean_t.bed", y_path::String = "/Users/kkeys/Downloads/withnoiselevelsd0_1/Y.100.1", b_path::String = "/Users/kkeys/Downloads/withnoiselevelsd0_1/causal.100.1", r::Int = 10, tol::Float64 = 1e-4, max_iter::Int = 100, quiet::Bool = false, extra::Int = 10, window::Int = 10) 
 
     # repeat input options
 	quiet || begin
@@ -392,7 +392,7 @@ function test_cv_exlstsq(kend,numfolds; tol::Float64 = 1e-4, max_iter::Int = 100
 end
 
 
-function compare_exlstsq(x::Matrix, kend, numfolds; tol::Float64 = 1e-4, max_iter::Int = 1000, quiet::Bool=true, compute_model::Bool = false, y_path::ASCIIString = "/Users/kkeys/Desktop/Thesis/Exchange/Y_1_same_1.0_2.0.txt", b_path::ASCIIString = "/Users/kkeys/Desktop/Thesis/Exchange/b_1_same_1.0_2.0.txt", bidx_path::ASCIIString = "/Users/kkeys/Desktop/Thesis/Exchange/bidx_1_same_1.0_2.0.txt")
+function compare_exlstsq(x::Matrix, kend, numfolds; tol::Float64 = 1e-4, max_iter::Int = 1000, quiet::Bool=true, compute_model::Bool = false, y_path::String = "/Users/kkeys/Desktop/Thesis/Exchange/Y_1_same_1.0_2.0.txt", b_path::String = "/Users/kkeys/Desktop/Thesis/Exchange/b_1_same_1.0_2.0.txt", bidx_path::String = "/Users/kkeys/Desktop/Thesis/Exchange/bidx_1_same_1.0_2.0.txt")
 
 	# notify of number of folds
 	quiet || println("Testing ", numfolds, "-fold crossvalidation from k = 1 to k = ", kend, "...")
